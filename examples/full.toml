@@ -1,0 +1,156 @@
+# full.toml — comprehensive pnut sandbox configuration
+#
+# This example exercises every configuration section and field.
+# Adjust uid_map.outside and gid_map.outside to match your host UID/GID.
+
+[sandbox]
+hostname = "sandbox"           # Hostname inside the sandbox (requires uts namespace)
+cwd = "/home/user"             # Working directory
+mode = "once"                  # "once" (fork+supervise) or "execve" (replace process)
+new_session = true             # setsid() — disconnect from controlling terminal
+die_with_parent = true         # Kill child if parent exits (PR_SET_PDEATHSIG)
+no_new_privs = true            # PR_SET_NO_NEW_PRIVS — block setuid/fscaps via execve
+# argv0 = "/bin/custom"       # Override argv[0] for the command
+# disable_tsc = false          # Disable RDTSC/RDTSCP (x86 only, causes SIGSEGV)
+
+[namespaces]
+user = true                    # User namespace — required for unprivileged mode
+pid = true                     # PID namespace — child becomes PID 1
+mount = true                   # Mount namespace — filesystem isolation via pivot_root
+uts = true                     # UTS namespace — required for sandbox.hostname
+ipc = true                     # IPC namespace — System V IPC, POSIX message queues
+net = true                     # Network namespace — true = loopback only
+cgroup = false                 # Cgroup namespace
+time = false                   # Time namespace — requires kernel >= 5.6
+
+# Map host UID 1000 → UID 0 inside the sandbox.
+[uid_map]
+inside = 0
+outside = 1000                 # Change to your UID (id -u)
+count = 1
+
+# Map host GID 1000 → GID 0 inside the sandbox.
+[gid_map]
+inside = 0
+outside = 1000                 # Change to your GID (id -g)
+count = 1
+
+# --- Filesystem mounts (applied in order, then pivot_root) ---
+
+# Bind-mount host /usr read-only.
+[[mount]]
+src = "/usr"
+dst = "/usr"
+bind = true
+read_only = true
+
+# Bind-mount host /lib read-only.
+[[mount]]
+src = "/lib"
+dst = "/lib"
+bind = true
+read_only = true
+
+# Bind-mount host /lib64 read-only (needed on x86_64).
+[[mount]]
+src = "/lib64"
+dst = "/lib64"
+bind = true
+read_only = true
+
+# Bind-mount host /bin read-only.
+[[mount]]
+src = "/bin"
+dst = "/bin"
+bind = true
+read_only = true
+
+# Mount proc filesystem.
+[[mount]]
+dst = "/proc"
+type = "proc"
+
+# Writable tmpfs at /tmp with 64 MiB limit.
+[[mount]]
+dst = "/tmp"
+type = "tmpfs"
+size = 67108864                # 64 MiB
+perms = "1777"
+
+# Writable tmpfs for /dev.
+[[mount]]
+dst = "/dev"
+type = "tmpfs"
+perms = "0755"
+
+# Inline file content — write a custom /etc/hostname.
+[[mount]]
+dst = "/etc/hostname"
+content = "sandbox"
+
+# --- Environment ---
+
+[env]
+clear = true                   # Start with a clean environment
+keep = ["TERM", "LANG"]       # Preserve these from the host
+
+[env.set]
+PATH = "/usr/bin:/bin"
+HOME = "/home/user"
+USER = "root"
+
+# --- Resource limits ---
+
+[rlimits]
+nofile = 256                   # Max open file descriptors
+nproc = 64                     # Max processes
+fsize_mb = 100                 # Max file size (MiB)
+stack_mb = 8                   # Max stack size (MiB)
+as_mb = 512                    # Max virtual memory (MiB)
+core_mb = 0                    # Disable core dumps
+cpu = 60                       # Max CPU time (seconds)
+
+# --- Landlock LSM ---
+
+[landlock]
+allowed_read = ["/usr", "/lib", "/lib64", "/bin", "/etc", "/proc"]
+allowed_write = ["/tmp"]
+allowed_execute = ["/usr/bin", "/bin"]
+
+# --- Capabilities ---
+
+[capabilities]
+keep = []                      # Drop all capabilities (safest default)
+# keep = ["CAP_NET_BIND_SERVICE"]  # Example: keep one capability
+
+# --- File descriptors ---
+
+[fd]
+close_fds = true            # Close all fds >= 3 not in map
+# map = [
+#   { src = 3, dst = 3 },     # Pass through fd 3
+# ]
+
+# --- Seccomp (inline policy) ---
+# Uncomment ONE of these (mutually exclusive):
+
+# seccomp_policy = """
+# POLICY default {
+#   ALLOW { read, write, exit, exit_group, brk, mmap, mprotect,
+#           close, openat, fstat, newfstatat, lseek, ioctl,
+#           rt_sigaction, rt_sigprocmask, execve, access, arch_prctl,
+#           set_tid_address, set_robust_list, prlimit64, getrandom,
+#           rseq, futex, getpid, getuid, getgid, geteuid, getegid }
+#   DENY {}
+# }
+# USE default DEFAULT KILL
+# """
+
+# seccomp_policy_file = "/path/to/policy.kafel"
+
+# --- Default command (overridden by CLI args after --) ---
+
+[run]
+path = "/bin/sh"
+args = ["-i"]
+# argv0 = "/bin/custom-shell"  # Override argv[0] for this command

@@ -1,0 +1,14 @@
+[namespaces]
+user = true
+pid = true
+mount = true
+
+[uid_map]
+inside = 0
+outside = 1000
+count = 1
+
+[gid_map]
+inside = 0
+outside = 1000
+count = 1

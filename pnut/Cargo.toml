@@ -1,0 +1,23 @@
+[package]
+name = "pnut"
+description = "Unprivileged Linux sandbox using namespaces, seccomp, and Landlock"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+keywords = { workspace = true }
+
+[lib]
+name = "pnut"
+path = "src/lib.rs"
+
+[dependencies]
+kafel = { workspace = true }
+thiserror = { workspace = true }
+nix = { workspace = true }
+libc = { workspace = true }
+landlock = "0.4.4"
+caps = "0.5.6"

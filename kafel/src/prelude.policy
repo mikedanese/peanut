@@ -1,0 +1,622 @@
+// Built-in seccomp stdlib for kafel and pnut.
+//
+// This single prelude mirrors the seccomp-expressible subset of Sandboxed API's
+// PolicyBuilder helpers. Non-seccomp side effects such as namespace toggles,
+// file additions, and tmpfs setup are intentionally omitted.
+
+#define PROT_NONE 0x0
+#define PROT_READ 0x1
+#define PROT_WRITE 0x2
+#define PROT_EXEC 0x4
+
+#define MAP_SHARED 0x01
+#define MAP_PRIVATE 0x02
+#define MAP_FILE 0x00
+#define MAP_FIXED 0x10
+#define MAP_ANONYMOUS 0x20
+#define MAP_DENYWRITE 0x0800
+#define MAP_NORESERVE 0x4000
+#define MAP_FIXED_NOREPLACE 0x100000
+
+#define MREMAP_MAYMOVE 1
+
+#define F_DUPFD 0
+#define F_GETFD 1
+#define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
+#define F_GETLK 5
+#define F_SETLK 6
+#define F_SETLKW 7
+#define F_DUPFD_CLOEXEC 1030
+
+#define TCGETS 0x5401
+
+#define SIG_BLOCK 0
+#define SIG_SETMASK 2
+#define SIGABRT 6
+#define GLIBC_SIGRTMIN_0 34
+#define GLIBC_SIGRTMIN_1 35
+
+#define EPERM 1
+#define ENOENT 2
+#define ENOSYS 38
+
+#define GRND_NONBLOCK 0x1
+
+#define PR_SET_PDEATHSIG 1
+#define PR_GET_PDEATHSIG 2
+#define PR_SET_NAME 15
+#define PR_SET_VMA 0x53564d41
+#define PR_SET_VMA_ANON_NAME 0
+
+#define ARCH_SET_FS 0x1002
+
+#define FUTEX_WAIT 0
+#define FUTEX_WAKE 1
+#define FUTEX_WAIT_BITSET 9
+#define FUTEX_CMD_MASK 0xFFFFFE7F
+
+#define BPF_MAP_LOOKUP_ELEM 1
+#define BPF_MAP_GET_NEXT_KEY 4
+#define BPF_OBJ_GET 7
+#define BPF_MAP_GET_FD_BY_ID 14
+#define BPF_OBJ_GET_INFO_BY_FD 15
+
+#define MADV_SEQUENTIAL 2
+#define MADV_DONTNEED 4
+#define MADV_REMOVE 9
+#define MADV_HUGEPAGE 14
+#define MADV_NOHUGEPAGE 15
+#define MADV_DONTDUMP 16
+#define MADV_WIPEONFORK 18
+#define MADV_POPULATE_READ 22
+#define MADV_POPULATE_WRITE 23
+#define MADV_COLLAPSE 25
+
+#define MAP_CLEAR_FIXED_NORESERVE_MASK 0xFFFFBFEF
+#define PROT_READ_WRITE_MASK_INV 0xFFFFFFFC
+
+// Leaf helpers
+
+POLICY allow_epoll_wait {
+    ALLOW { epoll_wait, epoll_pwait, epoll_pwait2 }
+}
+
+POLICY allow_epoll {
+    USE allow_epoll_wait
+    ALLOW { epoll_create, epoll_create1, epoll_ctl }
+}
+
+POLICY allow_inotify {
+    ALLOW { inotify_init, inotify_init1, inotify_add_watch, inotify_rm_watch, close }
+}
+
+POLICY allow_select {
+    ALLOW { select, pselect6 }
+}
+
+POLICY allow_exit {
+    ALLOW { exit, exit_group }
+}
+
+POLICY allow_open {
+    ALLOW { creat, open, openat }
+}
+
+POLICY allow_stat {
+    ALLOW { fstat, fstatfs, lstat, newfstatat, stat, statfs }
+}
+
+POLICY allow_access {
+    ALLOW { access, faccessat, faccessat2 }
+}
+
+POLICY allow_dup {
+    ALLOW { dup, dup2, dup3 }
+}
+
+POLICY allow_pipe {
+    ALLOW { pipe, pipe2 }
+}
+
+POLICY allow_chmod {
+    ALLOW { chmod, fchmod, fchmodat }
+}
+
+POLICY allow_chown {
+    ALLOW { chown, lchown, fchown, fchownat }
+}
+
+POLICY allow_read {
+    ALLOW { read, readv, preadv, pread64 }
+}
+
+POLICY allow_write {
+    ALLOW { write, writev, pwritev, pwrite64 }
+}
+
+POLICY allow_readdir {
+    ALLOW { getdents, getdents64 }
+}
+
+POLICY allow_readlink {
+    ALLOW { readlink, readlinkat }
+}
+
+POLICY allow_link {
+    ALLOW { link, linkat }
+}
+
+POLICY allow_symlink {
+    ALLOW { symlink, symlinkat }
+}
+
+POLICY allow_mkdir {
+    ALLOW { mkdir, mkdirat }
+}
+
+POLICY allow_utime {
+    ALLOW { futimesat, utime, utimes, utimensat }
+}
+
+POLICY allow_fork {
+    ALLOW { fork, vfork, clone }
+}
+
+POLICY allow_wait {
+    ALLOW { wait4 }
+}
+
+POLICY allow_alarm {
+    ALLOW { alarm, setitimer }
+}
+
+POLICY allow_posix_timers {
+    ALLOW { timer_create, timer_delete, timer_settime, timer_gettime, timer_getoverrun }
+}
+
+POLICY allow_handle_signals {
+    ALLOW { restart_syscall, rt_sigaction, rt_sigreturn, rt_sigprocmask, sigaltstack }
+}
+
+POLICY allow_time {
+    ALLOW { time, gettimeofday, clock_gettime }
+}
+
+POLICY allow_sleep {
+    ALLOW { clock_nanosleep, nanosleep }
+}
+
+POLICY allow_get_ids {
+    ALLOW { getuid, geteuid, getresuid, getgid, getegid, getresgid, getgroups }
+}
+
+POLICY allow_get_pids {
+    ALLOW { getpid, getppid, gettid }
+}
+
+POLICY allow_get_pgids {
+    ALLOW { getpgid, getpgrp }
+}
+
+POLICY allow_setrlimit {
+    ALLOW { setrlimit, prlimit64 }
+}
+
+POLICY allow_unlink {
+    ALLOW { rmdir, unlink, unlinkat }
+}
+
+POLICY allow_poll {
+    ALLOW { poll, ppoll }
+}
+
+POLICY allow_rename {
+    ALLOW { rename, renameat, renameat2 }
+}
+
+POLICY allow_eventfd {
+    ALLOW { eventfd, eventfd2 }
+}
+
+POLICY allow_mmap {
+    ALLOW { mmap }
+}
+
+POLICY allow_mprotect {
+    ALLOW { mprotect }
+}
+
+POLICY allow_pkey_mprotect {
+    ALLOW { pkey_mprotect }
+}
+
+POLICY allow_mlock {
+    ALLOW { mlock, munlock, mlock2 }
+}
+
+// Filtered helpers
+
+POLICY allow_safe_bpf {
+    ALLOW {
+        bpf(cmd, attr, size) {
+            cmd == BPF_MAP_LOOKUP_ELEM ||
+            cmd == BPF_MAP_GET_NEXT_KEY ||
+            cmd == BPF_OBJ_GET ||
+            cmd == BPF_MAP_GET_FD_BY_ID ||
+            cmd == BPF_OBJ_GET_INFO_BY_FD
+        }
+    }
+}
+
+POLICY allow_safe_fcntl {
+    ALLOW {
+        fcntl(fd, cmd, arg) {
+            cmd == F_GETFD ||
+            cmd == F_SETFD ||
+            cmd == F_GETFL ||
+            cmd == F_SETFL ||
+            cmd == F_GETLK ||
+            cmd == F_SETLK ||
+            cmd == F_SETLKW ||
+            cmd == F_DUPFD ||
+            cmd == F_DUPFD_CLOEXEC
+        }
+    }
+}
+
+POLICY allow_tcgets {
+    ALLOW {
+        ioctl(fd, req, arg) { req == TCGETS }
+    }
+}
+
+POLICY allow_getrlimit {
+    ALLOW {
+        getrlimit,
+        prlimit64(pid, resource, new_limit, old_limit) { new_limit == 0 }
+    }
+}
+
+POLICY allow_getrandom {
+    ALLOW {
+        getrandom(buf, len, flags) {
+            flags == 0 || flags == GRND_NONBLOCK
+        }
+    }
+}
+
+POLICY allow_wipe_on_fork {
+    ALLOW {
+        madvise(addr, len, advice) {
+            advice == MADV_WIPEONFORK || advice == 0xffffffff
+        }
+    }
+}
+
+POLICY allow_prctl_set_name {
+    ALLOW {
+        prctl(option, arg2, arg3, arg4, arg5) { option == PR_SET_NAME }
+    }
+}
+
+POLICY allow_prctl_set_vma {
+    ALLOW {
+        prctl(option, arg2, arg3, arg4, arg5) {
+            option == PR_SET_VMA && arg2 == PR_SET_VMA_ANON_NAME
+        }
+    }
+}
+
+POLICY allow_futex_wait {
+    ALLOW {
+        futex(uaddr, op, val, timeout, uaddr2, val3) {
+            (op & FUTEX_CMD_MASK) == FUTEX_WAIT
+        }
+    }
+}
+
+POLICY allow_futex_wake {
+    ALLOW {
+        futex(uaddr, op, val, timeout, uaddr2, val3) {
+            (op & FUTEX_CMD_MASK) == FUTEX_WAKE
+        }
+    }
+}
+
+POLICY allow_futex_wait_bitset {
+    ALLOW {
+        futex(uaddr, op, val, timeout, uaddr2, val3) {
+            (op & FUTEX_CMD_MASK) == FUTEX_WAIT_BITSET
+        }
+    }
+}
+
+POLICY allow_limited_madvise {
+    ALLOW {
+        madvise(addr, len, advice) {
+            advice == MADV_SEQUENTIAL ||
+            advice == MADV_DONTNEED ||
+            advice == MADV_REMOVE ||
+            advice == MADV_HUGEPAGE ||
+            advice == MADV_NOHUGEPAGE ||
+            advice == MADV_DONTDUMP ||
+            advice == MADV_COLLAPSE
+        }
+    }
+}
+
+POLICY allow_madvise_populate {
+    ALLOW {
+        madvise(addr, len, advice) {
+            advice == MADV_POPULATE_READ ||
+            advice == MADV_POPULATE_WRITE
+        }
+    }
+}
+
+POLICY allow_mmap_without_exec {
+    ALLOW {
+        mmap(addr, len, prot, flags, fd, offset) {
+            (prot & PROT_EXEC) == 0
+        }
+    }
+}
+
+POLICY allow_mprotect_without_exec {
+    ALLOW {
+        mprotect(addr, len, prot) { (prot & PROT_EXEC) == 0 }
+    }
+}
+
+POLICY allow_pkey_mprotect_without_exec {
+    ALLOW {
+        pkey_mprotect(addr, len, prot, pkey) { (prot & PROT_EXEC) == 0 }
+    }
+}
+
+POLICY allow_shared_memory {
+    ALLOW {
+        mmap(addr, len, prot, flags, fd, offset) {
+            prot == (PROT_READ | PROT_WRITE) &&
+            flags == MAP_SHARED
+        }
+    }
+}
+
+// Composite helpers
+
+POLICY allow_system_malloc {
+    USE allow_futex_wake
+    ALLOW {
+        munmap,
+        brk,
+        mremap(old_addr, old_len, new_len, flags, new_addr) {
+            flags == MREMAP_MAYMOVE
+        },
+        mmap(addr, len, prot, flags, fd, offset) {
+            (prot == (PROT_READ | PROT_WRITE) &&
+             flags == (MAP_ANONYMOUS | MAP_PRIVATE)) ||
+            (prot == PROT_NONE &&
+             flags == (MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE))
+        }
+    }
+}
+
+POLICY allow_scudo_malloc {
+    USE allow_time
+    USE allow_limited_madvise
+    USE allow_getrandom
+    USE allow_get_pids
+    USE allow_wipe_on_fork
+    USE allow_futex_wake
+    ALLOW {
+        munmap,
+        nanosleep,
+        mmap(addr, len, prot, flags, fd, offset) {
+            (prot == (PROT_READ | PROT_WRITE) &&
+             (flags & MAP_CLEAR_FIXED_NORESERVE_MASK) == (MAP_PRIVATE | MAP_ANONYMOUS)) ||
+            (prot == PROT_NONE &&
+             flags == (MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE))
+        }
+    }
+    ERRNO(ENOENT) { open, openat }
+}
+
+POLICY allow_restartable_sequences_fast {
+    USE allow_futex_wait
+    USE allow_futex_wake
+    USE allow_read
+    USE allow_open
+    USE allow_poll
+    USE allow_prctl_set_vma
+    ALLOW {
+        rseq,
+        getcpu,
+        membarrier,
+        close,
+        mmap(addr, len, prot, flags, fd, offset) {
+            prot == (PROT_READ | PROT_WRITE) &&
+            flags == (MAP_PRIVATE | MAP_ANONYMOUS)
+        },
+        rt_sigprocmask(how, set, old) { how == SIG_SETMASK }
+    }
+}
+
+POLICY allow_restartable_sequences_slow {
+    USE allow_restartable_sequences_fast
+    ALLOW { sched_getaffinity, sched_setaffinity }
+}
+
+POLICY allow_tcmalloc {
+    USE allow_time
+    USE allow_restartable_sequences_fast
+    USE allow_limited_madvise
+    USE allow_prctl_set_vma
+    USE allow_poll
+    USE allow_get_pids
+    ALLOW {
+        munmap,
+        nanosleep,
+        brk,
+        mincore,
+        membarrier,
+        lseek,
+        mprotect(addr, len, prot) {
+            prot == (PROT_READ | PROT_WRITE) || prot == PROT_NONE
+        },
+        mmap(addr, len, prot, flags, fd, offset) {
+            (prot == (PROT_READ | PROT_WRITE) &&
+             flags == (MAP_ANONYMOUS | MAP_PRIVATE)) ||
+            (prot == PROT_NONE &&
+             (flags == (MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE) ||
+              flags == (MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED_NOREPLACE) ||
+              flags == (MAP_ANONYMOUS | MAP_PRIVATE)))
+        }
+    }
+}
+
+POLICY allow_llvm_sanitizers {
+    // Mirrors the seccomp subset of AllowLlvmSanitizers(). Filesystem additions
+    // and sanitizer-specific conditionals are intentionally omitted.
+    USE allow_mmap_without_exec
+    USE allow_open
+    USE allow_get_pids
+    USE allow_dynamic_startup
+    ALLOW {
+        munmap,
+        sched_yield,
+        sched_getaffinity,
+        mprotect(addr, len, prot) {
+            (prot & PROT_READ_WRITE_MASK_INV) == 0
+        },
+        madvise(addr, len, advice) {
+            advice == MADV_DONTDUMP ||
+            advice == MADV_DONTNEED ||
+            advice == MADV_NOHUGEPAGE
+        }
+    }
+    ERRNO(EPERM) { ioctl }
+    ERRNO(ENOENT) { readlink, readlinkat }
+}
+
+POLICY allow_llvm_coverage {
+    // Mirrors the seccomp subset of AllowLlvmCoverage(). Coverage-directory
+    // mounts remain the caller's responsibility.
+    USE allow_stat
+    USE allow_get_pids
+    USE allow_open
+    USE allow_read
+    USE allow_write
+    USE allow_mkdir
+    USE allow_safe_fcntl
+    USE allow_tcmalloc
+    ALLOW {
+        munmap,
+        close,
+        lseek,
+        mmap(addr, len, prot, flags, fd, offset) {
+            prot == (PROT_READ | PROT_WRITE) && flags == MAP_SHARED
+        },
+        prctl(option, arg2, arg3, arg4, arg5) { option == PR_GET_PDEATHSIG }
+    }
+    ERRNO(EPERM) {
+        prctl(option, arg2, arg3, arg4, arg5) { option == PR_SET_PDEATHSIG }
+    }
+}
+
+POLICY allow_log_forwarding {
+    USE allow_write
+    USE allow_system_malloc
+    USE allow_tcmalloc
+    USE allow_get_pids
+    USE allow_getrlimit
+    ALLOW {
+        clock_gettime,
+        gettid,
+        close,
+        rt_sigprocmask(how, set, old) { how == SIG_BLOCK },
+        kill(pid, sig) { pid == 0 && sig == SIGABRT }
+    }
+}
+
+POLICY allow_static_startup {
+    // Based on AllowStaticStartup(), extended for modern glibc (2.35+).
+    // rseq and getrandom are not in upstream AllowStaticStartup() but are
+    // called unconditionally by glibc >= 2.35 during init.
+    // readlink/sigaltstack are intentionally blocked to match the upstream
+    // helper's startup posture.
+    USE allow_getrlimit
+    USE allow_futex_wait_bitset
+    ALLOW {
+        uname,
+        brk,
+        set_tid_address,
+        set_robust_list,
+        rseq,
+        getrandom,
+        rt_sigprocmask,
+        rt_sigaction(sig, act, old, size) {
+            sig == GLIBC_SIGRTMIN_0 || sig == GLIBC_SIGRTMIN_1
+        },
+        arch_prctl(code, addr) { code == ARCH_SET_FS },
+        mprotect(addr, len, prot) { prot == PROT_READ }
+    }
+    ERRNO(ENOENT) { readlink, readlinkat }
+    ERRNO(ENOSYS) { sigaltstack }
+}
+
+POLICY allow_dynamic_startup {
+    // Mirrors AllowDynamicStartup() with executable mappings enabled.
+    USE allow_access
+    USE allow_open
+    USE allow_read
+    USE allow_stat
+    USE allow_static_startup
+    ALLOW {
+        lseek,
+        close,
+        munmap,
+        mprotect(addr, len, prot) {
+            prot == PROT_READ ||
+            prot == PROT_NONE ||
+            prot == (PROT_READ | PROT_WRITE) ||
+            prot == (PROT_READ | PROT_EXEC)
+        },
+        mmap(addr, len, prot, flags, fd, offset) {
+            (prot == PROT_READ &&
+             flags == MAP_PRIVATE) ||
+            (prot == (PROT_READ | PROT_WRITE) &&
+             (flags == (MAP_FILE | MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE) ||
+              flags == (MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED) ||
+              flags == (MAP_ANONYMOUS | MAP_PRIVATE))) ||
+            (prot == (PROT_READ | PROT_EXEC) &&
+             (flags == (MAP_FILE | MAP_PRIVATE | MAP_DENYWRITE) ||
+              flags == (MAP_FILE | MAP_PRIVATE | MAP_DENYWRITE | MAP_FIXED)))
+        }
+    }
+}
+
+POLICY allow_default_policy {
+    // Based on Sandbox2Config::DefaultPolicyBuilder(), with startup included.
+    USE allow_dynamic_startup
+    USE allow_read
+    USE allow_write
+    USE allow_exit
+    USE allow_getrlimit
+    USE allow_get_ids
+    USE allow_tcgets
+    USE allow_time
+    USE allow_open
+    USE allow_stat
+    USE allow_handle_signals
+    USE allow_system_malloc
+    USE allow_safe_fcntl
+    USE allow_get_pids
+    USE allow_sleep
+    USE allow_readlink
+    USE allow_access
+    USE allow_shared_memory
+    ALLOW { recvmsg, sendmsg, futex, close, lseek, uname, kill, tgkill, tkill, arch_prctl }
+}

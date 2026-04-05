@@ -1,0 +1,17 @@
+[package]
+name = "kafel"
+description = "Seccomp-bpf policy compiler — Kafel DSL to BPF bytecode"
+version = "0.1.0"
+edition = { workspace = true }
+license = { workspace = true }
+readme = "README.md"
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = ["os::linux-apis"]
+keywords = ["seccomp", "bpf", "syscall", "sandbox", "linux"]
+
+[dependencies]
+pest = "2.8.6"
+pest_derive = "2.8.6"
+libc = { workspace = true }
+thiserror = { workspace = true }

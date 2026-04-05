@@ -1,0 +1,120 @@
+// pnut seccomp policy grammar
+//
+// A Kafel-inspired DSL for defining seccomp-bpf policies. Designed for
+// readability and composability while compiling to BPF bytecode.
+//
+// Example:
+//
+//   #define STDOUT 1
+//   #define STDERR 2
+//
+//   POLICY stdio {
+//     ALLOW {
+//       read(fd, buf, count) { fd == 0 }
+//       write(fd, buf, count) { fd == STDOUT || fd == STDERR }
+//       close, dup, dup2, lseek, fstat
+//     }
+//   }
+//
+//   POLICY no_exec {
+//     KILL { execve, execveat }
+//     ERRNO(1) { ptrace, process_vm_readv, process_vm_writev }
+//   }
+//
+//   USE stdio, no_exec DEFAULT ALLOW
+
+// --- Top-level structure ---
+
+file = { SOI ~ (include_directive | define | policy | use_stmt)* ~ EOI }
+
+// --- Include directives ---
+// #include "filename"
+include_directive = { "#include" ~ string_literal }
+string_literal    = @{ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
+
+// --- Preprocessor defines ---
+// #define NAME value
+define = { "#define" ~ ident ~ expr }
+
+// --- Policy blocks ---
+// POLICY name { action_block, ... }
+policy = { "POLICY" ~ ident ~ "{" ~ (action_block | use_ref)* ~ "}" }
+
+// USE PolicyName (inside a policy for composition)
+use_ref = { "USE" ~ ident ~ ","? }
+
+// --- Action blocks ---
+// ACTION { syscall_rule, ... }
+// ERRNO(n) { syscall_rule, ... }
+// TRAP(n) { syscall_rule, ... }
+// TRACE(n) { syscall_rule, ... }
+action_block = { action ~ "{" ~ syscall_rules ~ "}" }
+
+action = {
+    "ALLOW"
+  | "KILL_PROCESS"
+  | "KILL"
+  | "LOG"
+  | "USER_NOTIF"
+  | errno_action
+  | trap_action
+  | trace_action
+}
+
+errno_action = { "ERRNO" ~ "(" ~ expr ~ ")" }
+trap_action  = { "TRAP" ~ "(" ~ expr ~ ")" }
+trace_action = { "TRACE" ~ "(" ~ expr ~ ")" }
+
+// --- Syscall rules ---
+// Comma-separated list of syscall entries
+syscall_rules = { syscall_entry ~ ("," ~ syscall_entry)* ~ ","? }
+
+// A syscall with optional argument names and filter expression
+syscall_entry = { ident ~ arg_decl? ~ filter_block? }
+
+// Argument declaration: (fd, buf, count)
+arg_decl = { "(" ~ ident ~ ("," ~ ident)* ~ ")" }
+
+// Filter expression: { boolean_expr }
+filter_block = { "{" ~ bool_expr ~ "}" }
+
+// --- Boolean expressions ---
+// Supports &&, ||, and comma (lowest-precedence OR, matching Kafel)
+bool_expr = { or_expr ~ ("," ~ or_expr)* }
+or_expr   = { and_expr ~ ("||" ~ and_expr)* }
+and_expr  = { not_expr ~ ("&&" ~ not_expr)* }
+not_expr  = { "!" ~ not_expr | primary_expr }
+
+primary_expr = {
+    "(" ~ bool_expr ~ ")"
+  | comparison
+}
+
+// --- Comparisons ---
+// arg_name == value, arg_name != value, (arg & mask) == value, etc.
+comparison = { cmp_lhs ~ cmp_op ~ cmp_rhs }
+
+cmp_lhs = { masked_expr | ident }
+masked_expr = { "(" ~ ident ~ "&" ~ expr ~ ")" }
+
+cmp_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+
+cmp_rhs = { expr }
+
+// --- Expressions (values) ---
+// Supports bitwise OR for flag combination: O_RDWR|O_CREAT, including
+// parenthesized grouping like (PROT_READ | PROT_WRITE).
+expr = { expr_atom ~ ("|" ~ expr_atom)* }
+
+expr_atom = { number | ident | "(" ~ expr ~ ")" }
+
+// --- Use statement (top-level) ---
+// USE policy1, policy2 DEFAULT ACTION
+use_stmt = { "USE" ~ ident ~ ("," ~ ident)* ~ "DEFAULT" ~ action }
+
+// --- Terminals ---
+ident  = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+number = @{ "0x" ~ ASCII_HEX_DIGIT+ | "0o" ~ ASCII_OCT_DIGIT+ | ASCII_DIGIT+ }
+
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+COMMENT    = _{ "//" ~ (!NEWLINE ~ ANY)* | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
