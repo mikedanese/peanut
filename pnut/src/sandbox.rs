@@ -70,6 +70,10 @@ pub struct ProcessOptions {
     /// Disable RDTSC/RDTSCP instructions (x86/x86_64 only).
     /// Causes SIGSEGV on RDTSC. Default: `false`.
     pub disable_tsc: bool,
+    /// Set `PR_SET_DUMPABLE` to 0 (non-dumpable). Prevents same-UID ptrace
+    /// and `/proc/<pid>/mem` access from outside the sandbox. Default: `false`
+    /// (i.e. non-dumpable by default).
+    pub dumpable: bool,
 }
 
 impl Default for ProcessOptions {
@@ -79,6 +83,7 @@ impl Default for ProcessOptions {
             die_with_parent: true,
             no_new_privs: true,
             disable_tsc: false,
+            dumpable: false,
         }
     }
 }
@@ -318,7 +323,7 @@ impl SandboxBuilder {
             }
         }
 
-        let seccomp_program = seccomp::prepare_program(self.seccomp.as_ref())?;
+        let seccomp_program = seccomp::prepare_program(self.seccomp.as_ref(), &self.namespaces)?;
 
         Ok(Sandbox {
             mode: self.mode,
@@ -466,6 +471,18 @@ fn run_execve_mode(sandbox: &Sandbox) -> Result<i32, Error> {
 
 /// Shared child setup sequence used by both execution modes.
 fn run_child_setup(sandbox: &Sandbox) -> ! {
+    {
+        let dumpable = if sandbox.process.dumpable { 1 } else { 0 };
+        let ret = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, dumpable, 0, 0, 0) };
+        if ret != 0 {
+            eprintln!(
+                "pnut: failed to set PR_SET_DUMPABLE: {}",
+                std::io::Error::last_os_error()
+            );
+            std::process::exit(126);
+        }
+    }
+
     if sandbox.namespaces.mount
         && !sandbox.mounts.is_empty()
         && let Err(e) = mount::setup_filesystem(sandbox)

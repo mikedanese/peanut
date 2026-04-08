@@ -44,6 +44,12 @@ pub struct Config {
     /// Hostname seen inside the sandbox. Requires `uts = true`.
     /// Default: `None` (inherit host hostname).
     pub hostname: Option<String>,
+
+    /// Allow the sandboxed process to create nested user namespaces.
+    /// When `false` (default), seccomp rules deny `clone3` (ENOSYS),
+    /// and deny `clone`/`unshare` with namespace flags.
+    /// Matches Sandboxed API's approach (`sandbox2/policy.cc`).
+    pub allow_nested_userns: bool,
 }
 
 impl Default for Config {
@@ -58,6 +64,7 @@ impl Default for Config {
             cgroup: false,
             time: false,
             hostname: None,
+            allow_nested_userns: false,
         }
     }
 }

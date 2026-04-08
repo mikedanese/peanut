@@ -4,9 +4,8 @@ What's next for pnut, roughly in priority order.
 
 ## Now
 
-- **Publish to crates.io** — `pnut`, `pnut-cli`, and `kafel` crates.
-- **Man pages** — `pnut(1)` and `pnut.toml(5)` are written (scdoc source in
-  `doc/`); ship them with the CLI package.
+- **Man page installation** — `pnut(1)` and `pnut.toml(5)` are written (scdoc
+  source in `doc/`); need an install story (`make install` or similar).
 
 ## Next
 
@@ -16,16 +15,6 @@ What's next for pnut, roughly in priority order.
   kernel's ABI and opportunistically enable: rename/link control (V2, 5.19),
   truncation control (V3, 6.2), TCP port policy (V4, 6.7), device ioctl
   mediation (V5, 6.10). The `landlock` crate already supports ABI negotiation.
-- **PR_SET_DUMPABLE** — set non-dumpable by default. Prevents same-UID
-  ptrace and `/proc/<pid>/mem` access. Used by Chromium and bubblewrap.
-- **/proc hardening** — mount proc with `subset=pid` (5.8+) and
-  `hidepid=invisible` to strip global kernel state (`/proc/sys`,
-  `/proc/kallsyms`, `/proc/modules`).
-- **Block nested user namespaces** — seccomp deny of `unshare`/`clone3`/`setns`
-  with namespace flags. Prevents sandboxed process from reshaping its own
-  confinement. Bubblewrap has `--disable-userns`.
-- **SECCOMP_FILTER_FLAG_TSYNC** — synchronize seccomp filters across all
-  threads. Should be default when loading filters.
 
 ### Supervision
 

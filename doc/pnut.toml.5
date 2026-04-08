@@ -83,6 +83,12 @@ Disable RDTSC and RDTSCP instructions via \fBprctl\fR(2) (PR_SET_TSC).\&
 x86/x86_64 only; causes SIGSEGV on RDTSC.\& Default: \fBfalse\fR.\&
 .P
 .RE
+\fBdumpable\fR (bool)
+.RS 4
+Set PR_SET_DUMPABLE.\& When \fBfalse\fR, prevents same-UID ptrace and
+\fB/proc/<pid>/mem\fR access from outside the sandbox.\& Default: \fBfalse\fR.\&
+.P
+.RE
 .SS [namespaces]
 .P
 Controls which Linux namespaces are created.\& All fields are booleans.\&
@@ -132,6 +138,14 @@ Time namespace.\& Virtualizes CLOCK_MONOTONIC and CLOCK_BOOTTIME.\& Requires
 kernel >= 5.\&6.\& Default: \fBfalse\fR.\&
 .P
 .RE
+\fBallow_nested_userns\fR (bool)
+.RS 4
+Allow the sandboxed process to create nested user namespaces.\& When
+\fBfalse\fR, seccomp rules deny \fBclone3\fR (ENOSYS), \fBclone\fR and \fBunshare\fR
+with namespace flags.\& Prevents sandbox escape via namespace reshaping.\&
+Default: \fBfalse\fR.\&
+.P
+.RE
 .SS [[mount]]
 .P
 An ordered array of filesystem mount operations.\& Each entry is a TOML
@@ -163,6 +177,22 @@ Remount read-only (MS_RDONLY).\& Default: \fBfalse\fR.\&
 .RS 4
 Filesystem type for a fresh mount (e.\&g.\&, \fBtmpfs\fR, \fBproc\fR, \fBmqueue\fR).\&
 Mutually exclusive with \fBbind\fR and \fBcontent\fR.\&
+.P
+.RE
+\fBproc_subset\fR (string)
+.RS 4
+Proc mount only.\& The \fBsubset=\fR mount option.\& Valid values: \fB"pid"\fR.\&
+When set to \fB"pid"\fR (default), only PID-related entries are visible;
+\fB/proc/sys\fR, \fB/proc/kallsyms\fR, \fB/proc/net\fR, etc.\& are hidden.\&
+Set to \fBnull\fR to mount full proc.\& Requires kernel >= 5.\&8.\&
+.P
+.RE
+\fBhidepid\fR (string)
+.RS 4
+Proc mount only.\& The \fBhidepid=\fR mount option.\& Valid values:
+\fB"invisible"\fR (default), \fB"hidden"\fR, \fB"visible"\fR, or numeric
+\fB"0"\fR, \fB"1"\fR, \fB"2"\fR.\& Controls visibility of other processes'\&
+\fB/proc/<pid>\fR directories.\&
 .P
 .RE
 \fBcontent\fR (string)

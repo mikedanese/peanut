@@ -75,6 +75,8 @@ struct SettingsConfig {
     argv0: Option<String>,
     #[serde(default)]
     disable_tsc: bool,
+    #[serde(default)]
+    dumpable: bool,
 }
 
 impl Default for SettingsConfig {
@@ -88,6 +90,7 @@ impl Default for SettingsConfig {
             no_new_privs: true,
             argv0: None,
             disable_tsc: false,
+            dumpable: false,
         }
     }
 }
@@ -128,6 +131,8 @@ struct NamespaceConfig {
     cgroup: bool,
     #[serde(default)]
     time: bool,
+    #[serde(default)]
+    allow_nested_userns: bool,
 }
 
 impl Default for NamespaceConfig {
@@ -141,6 +146,7 @@ impl Default for NamespaceConfig {
             net: false,
             cgroup: false,
             time: false,
+            allow_nested_userns: false,
         }
     }
 }
@@ -164,10 +170,32 @@ struct MountEntryConfig {
     size: Option<u64>,
     #[serde(default)]
     perms: Option<String>,
+    #[serde(default = "default_proc_subset")]
+    proc_subset: Option<String>,
+    #[serde(default = "default_hidepid")]
+    hidepid: Option<String>,
+}
+
+fn default_proc_subset() -> Option<String> {
+    Some("pid".to_string())
+}
+
+fn default_hidepid() -> Option<String> {
+    Some("invisible".to_string())
 }
 
 impl From<MountEntryConfig> for pnut::mount::Entry {
     fn from(config: MountEntryConfig) -> Self {
+        let proc_subset = config.proc_subset.as_deref().map(|s| match s {
+            "pid" => pnut::mount::ProcSubset::Pid,
+            other => panic!("unknown proc_subset value: {other}"),
+        });
+        let hidepid = config.hidepid.as_deref().map(|s| match s {
+            "invisible" | "2" => pnut::mount::HidePid::Invisible,
+            "hidden" | "1" => pnut::mount::HidePid::Hidden,
+            "visible" | "0" => pnut::mount::HidePid::Visible,
+            other => panic!("unknown hidepid value: {other}"),
+        });
         Self {
             src: config.src,
             dst: config.dst,
@@ -177,6 +205,8 @@ impl From<MountEntryConfig> for pnut::mount::Entry {
             content: config.content,
             size: config.size,
             perms: config.perms,
+            proc_subset,
+            hidepid,
         }
     }
 }
@@ -417,6 +447,7 @@ fn sandbox_from_config(config: SandboxConfig) -> Result<SandboxBuilder> {
     builder.process().die_with_parent = settings.die_with_parent;
     builder.process().no_new_privs = settings.no_new_privs;
     builder.process().disable_tsc = settings.disable_tsc;
+    builder.process().dumpable = settings.dumpable;
 
     // Namespace config + hostname from settings.
     let ns_config = pnut::namespace::Config {
@@ -429,6 +460,7 @@ fn sandbox_from_config(config: SandboxConfig) -> Result<SandboxBuilder> {
         cgroup: namespaces.cgroup,
         time: namespaces.time,
         hostname: settings.hostname,
+        allow_nested_userns: namespaces.allow_nested_userns,
     };
     *builder.namespaces() = ns_config;
 

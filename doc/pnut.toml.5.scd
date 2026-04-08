@@ -56,6 +56,10 @@ General sandbox settings. All fields are optional.
 	Disable RDTSC and RDTSCP instructions via *prctl*(2) (PR_SET_TSC).
 	x86/x86_64 only; causes SIGSEGV on RDTSC. Default: *false*.
 
+*dumpable* (bool)
+	Set PR_SET_DUMPABLE. When *false*, prevents same-UID ptrace and
+	*/proc/<pid>/mem* access from outside the sandbox. Default: *false*.
+
 ## [namespaces]
 
 Controls which Linux namespaces are created. All fields are booleans.
@@ -89,6 +93,12 @@ Controls which Linux namespaces are created. All fields are booleans.
 	Time namespace. Virtualizes CLOCK_MONOTONIC and CLOCK_BOOTTIME. Requires
 	kernel >= 5.6. Default: *false*.
 
+*allow_nested_userns* (bool)
+	Allow the sandboxed process to create nested user namespaces. When
+	*false*, seccomp rules deny *clone3* (ENOSYS), *clone* and *unshare*
+	with namespace flags. Prevents sandbox escape via namespace reshaping.
+	Default: *false*.
+
 ## [[mount]]
 
 An ordered array of filesystem mount operations. Each entry is a TOML
@@ -111,6 +121,18 @@ Each entry must specify exactly one of: *bind*, *type*, or *content*.
 *type* (string)
 	Filesystem type for a fresh mount (e.g., *tmpfs*, *proc*, *mqueue*).
 	Mutually exclusive with *bind* and *content*.
+
+*proc_subset* (string)
+	Proc mount only. The *subset=* mount option. Valid values: *"pid"*.
+	When set to *"pid"* (default), only PID-related entries are visible;
+	*/proc/sys*, */proc/kallsyms*, */proc/net*, etc. are hidden.
+	Set to *null* to mount full proc. Requires kernel >= 5.8.
+
+*hidepid* (string)
+	Proc mount only. The *hidepid=* mount option. Valid values:
+	*"invisible"* (default), *"hidden"*, *"visible"*, or numeric
+	*"0"*, *"1"*, *"2"*. Controls visibility of other processes'
+	*/proc/<pid>* directories.
 
 *content* (string)
 	Inline file content. A regular file is created at *dst* with this content.

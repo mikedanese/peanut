@@ -12,6 +12,7 @@ die_with_parent = true         # Kill child if parent exits (PR_SET_PDEATHSIG)
 no_new_privs = true            # PR_SET_NO_NEW_PRIVS — block setuid/fscaps via execve
 # argv0 = "/bin/custom"       # Override argv[0] for the command
 # disable_tsc = false          # Disable RDTSC/RDTSCP (x86 only, causes SIGSEGV)
+# dumpable = false             # PR_SET_DUMPABLE — prevents ptrace and /proc/pid/mem access
 
 [namespaces]
 user = true                    # User namespace — required for unprivileged mode
@@ -22,6 +23,7 @@ ipc = true                     # IPC namespace — System V IPC, POSIX message q
 net = true                     # Network namespace — true = loopback only
 cgroup = false                 # Cgroup namespace
 time = false                   # Time namespace — requires kernel >= 5.6
+# allow_nested_userns = false  # Allow creating nested user namespaces (default: blocked)
 
 # Map host UID 1000 → UID 0 inside the sandbox.
 [uid_map]
@@ -66,9 +68,14 @@ bind = true
 read_only = true
 
 # Mount proc filesystem.
+# proc_subset defaults to "pid" (hides /proc/sys, /proc/net, etc.)
+# hidepid defaults to "invisible" (hides other processes' /proc/<pid>)
+# Set to null to disable: proc_subset = null, hidepid = null
 [[mount]]
 dst = "/proc"
 type = "proc"
+# proc_subset = "pid"
+# hidepid = "invisible"
 
 # Writable tmpfs at /tmp with 64 MiB limit.
 [[mount]]

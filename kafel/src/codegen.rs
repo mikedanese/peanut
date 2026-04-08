@@ -449,7 +449,7 @@ pub fn install_filter(program: &BpfProgram) -> Result<(), std::io::Error> {
         libc::syscall(
             libc::SYS_seccomp,
             libc::SECCOMP_SET_MODE_FILTER as libc::c_ulong,
-            0 as libc::c_ulong, // flags
+            libc::SECCOMP_FILTER_FLAG_TSYNC as libc::c_ulong,
             &prog as *const libc::sock_fprog as libc::c_ulong,
         )
     };

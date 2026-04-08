@@ -363,32 +363,29 @@ fn adversarial_net_false_inherits_host() {
     // lo should be up (inherited from host).
     let config = filesystem_config(); // net defaults to false
 
+    // Verify host network is inherited by opening a loopback socket.
+    // /proc/net/dev is unavailable under subset=pid proc mount.
+    let script = r#"
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(('127.0.0.1', 0))
+s.close()
+print('host_net_ok')
+"#;
+
     let out = pnut_with_config(&config)
-        .args([
-            "--",
-            "/bin/sh",
-            "-c",
-            // Check that lo interface exists and is UP in /proc/net/if_inet6
-            // or just use ip/cat to check. Simplest: check we can read
-            // /proc/net/dev which lists interfaces.
-            "cat /proc/net/dev | grep -c lo",
-        ])
+        .args(["--", "/usr/bin/python3", "-c", script])
         .output()
         .unwrap();
 
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        out.status.success(),
-        "should succeed with host network. stderr: {}",
+        stdout.contains("host_net_ok"),
+        "host network should be inherited.\nstdout: {}\nstderr: {}",
+        stdout,
         String::from_utf8_lossy(&out.stderr)
     );
-
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let count: i32 = stdout.parse().unwrap_or(0);
-    assert!(
-        count >= 1,
-        "lo interface should be visible when inheriting host network, got count: {}",
-        count
-    );
+    assert!(out.status.success());
 }
 
 // ── Test 7.7: Invalid capability name produces validation error ──

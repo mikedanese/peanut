@@ -3,12 +3,33 @@
 use crate::error::{Error, Stage};
 use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use nix::unistd::pivot_root;
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::slice;
 
 use crate::Sandbox;
+
+/// Proc mount `subset=` option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcSubset {
+    /// `subset=pid` — only PID-related entries are visible.
+    /// Hides `/proc/sys`, `/proc/kallsyms`, `/proc/modules`, etc.
+    Pid,
+}
+
+/// Proc mount `hidepid=` option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HidePid {
+    /// `hidepid=0` — all `/proc/<pid>` directories are visible to everyone.
+    Visible,
+    /// `hidepid=1` — users cannot access other users' `/proc/<pid>` contents.
+    Hidden,
+    /// `hidepid=2` / `hidepid=invisible` — other users' `/proc/<pid>` directories
+    /// are completely invisible.
+    Invisible,
+}
 
 /// One filesystem mount operation.
 #[derive(Debug, Clone)]
@@ -21,6 +42,12 @@ pub struct Entry {
     pub content: Option<String>,
     pub size: Option<u64>,
     pub perms: Option<String>,
+    /// Proc mount: `subset=` option. Default: `Some(ProcSubset::Pid)`.
+    /// Set to `None` to mount full proc.
+    pub proc_subset: Option<ProcSubset>,
+    /// Proc mount: `hidepid=` option. Default: `Some(HidePid::Invisible)`.
+    /// Set to `None` to use kernel default (`hidepid=0`).
+    pub hidepid: Option<HidePid>,
 }
 
 /// Ordered filesystem mount operations for a sandbox.
@@ -61,6 +88,8 @@ impl Table {
             content: None,
             size: None,
             perms: None,
+            proc_subset: None,
+            hidepid: None,
         })
     }
 
@@ -75,6 +104,8 @@ impl Table {
             content: None,
             size: None,
             perms: None,
+            proc_subset: None,
+            hidepid: None,
         })
     }
 
@@ -89,6 +120,8 @@ impl Table {
             content: None,
             size: None,
             perms: None,
+            proc_subset: None,
+            hidepid: None,
         })
     }
 
@@ -111,10 +144,13 @@ impl Table {
             content: None,
             size,
             perms: perms.map(Into::into),
+            proc_subset: None,
+            hidepid: None,
         })
     }
 
-    /// Add a procfs mount at the destination path.
+    /// Add a procfs mount at the destination path with default hardening
+    /// (`subset=pid`, `hidepid=invisible`).
     pub fn proc(&mut self, dst: impl Into<String>) -> &mut Self {
         self.push(Entry {
             src: None,
@@ -125,6 +161,8 @@ impl Table {
             content: None,
             size: None,
             perms: None,
+            proc_subset: Some(ProcSubset::Pid),
+            hidepid: Some(HidePid::Invisible),
         })
     }
 
@@ -139,6 +177,8 @@ impl Table {
             content: None,
             size: None,
             perms: None,
+            proc_subset: None,
+            hidepid: None,
         })
     }
 
@@ -153,6 +193,8 @@ impl Table {
             content: Some(content.into()),
             size: None,
             perms: None,
+            proc_subset: None,
+            hidepid: None,
         })
     }
 
@@ -171,6 +213,8 @@ impl Table {
             content: Some(content.into()),
             size: None,
             perms: None,
+            proc_subset: None,
+            hidepid: None,
         })
     }
 
@@ -345,31 +389,61 @@ fn process_tmpfs_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
     fs::create_dir_all(&target)
         .map_err(|e| mnt(format!("failed to create directory for tmpfs at {dst}"), e))?;
 
-    let mut opts = String::new();
+    let mut data = MountData::new();
     if let Some(size) = entry.size {
-        opts.push_str(&format!("size={size}"));
+        data.push("size", &size.to_string())?;
     }
     if let Some(ref perms) = entry.perms {
-        if !opts.is_empty() {
-            opts.push(',');
-        }
         let mode = u32::from_str_radix(perms.trim_start_matches('0'), 8)
             .map_err(|e| Error::Other(format!("invalid permissions: {perms}: {e}")))?;
-        opts.push_str(&format!("mode={mode:04o}"));
+        data.push("mode", &format!("{mode:04o}"))?;
     }
-
-    let opts_ref: Option<&str> = if opts.is_empty() { None } else { Some(&opts) };
+    let data = data.to_string();
 
     mount(
         Some("tmpfs"),
         &target,
         Some("tmpfs"),
         MsFlags::empty(),
-        opts_ref,
+        data.as_deref(),
     )
     .map_err(|e| mnt_nix(format!("tmpfs mount at {dst} failed"), e))?;
 
     Ok(())
+}
+
+/// Builder for mount data strings (the `data` argument to `mount(2)`).
+///
+/// Collects key=value pairs and joins them with commas.
+/// Returns `None` when empty. Rejects duplicate keys.
+struct MountData {
+    parts: Vec<String>,
+    keys: HashSet<String>,
+}
+
+impl MountData {
+    fn new() -> Self {
+        Self {
+            parts: Vec::new(),
+            keys: HashSet::new(),
+        }
+    }
+
+    fn push(&mut self, key: &str, value: &str) -> Result<(), Error> {
+        if !self.keys.insert(key.to_string()) {
+            return Err(Error::Other(format!("duplicate mount data key: {key}")));
+        }
+        self.parts.push(format!("{key}={value}"));
+        Ok(())
+    }
+
+    fn to_string(&self) -> Option<String> {
+        if self.parts.is_empty() {
+            None
+        } else {
+            Some(self.parts.join(","))
+        }
+    }
 }
 
 fn process_proc_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
@@ -382,12 +456,33 @@ fn process_proc_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
     fs::create_dir_all(&target)
         .map_err(|e| mnt(format!("failed to create directory for proc at {dst}"), e))?;
 
+    let mut data = MountData::new();
+    if let Some(subset) = &entry.proc_subset {
+        data.push(
+            "subset",
+            match subset {
+                ProcSubset::Pid => "pid",
+            },
+        )?;
+    }
+    if let Some(hidepid) = &entry.hidepid {
+        data.push(
+            "hidepid",
+            match hidepid {
+                HidePid::Visible => "0",
+                HidePid::Hidden => "1",
+                HidePid::Invisible => "invisible",
+            },
+        )?;
+    }
+    let data = data.to_string();
+
     mount(
         Some("proc"),
         &target,
         Some("proc"),
         MsFlags::empty(),
-        None::<&str>,
+        data.as_deref(),
     )
     .map_err(|e| mnt_nix(format!("proc mount at {dst} failed"), e))?;
 
@@ -567,4 +662,56 @@ fn ensure_mount_point(target: &Path, source: &str) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mount_data_empty() {
+        let data = MountData::new();
+        assert_eq!(data.to_string(), None);
+    }
+
+    #[test]
+    fn mount_data_single() {
+        let mut data = MountData::new();
+        data.push("size", "1024").unwrap();
+        assert_eq!(data.to_string(), Some("size=1024".to_string()));
+    }
+
+    #[test]
+    fn mount_data_multiple() {
+        let mut data = MountData::new();
+        data.push("newinstance", "1").unwrap();
+        data.push("ptmxmode", "0666").unwrap();
+        data.push("mode", "620").unwrap();
+        assert_eq!(
+            data.to_string(),
+            Some("newinstance=1,ptmxmode=0666,mode=620".to_string())
+        );
+    }
+
+    #[test]
+    fn mount_data_duplicate_key_rejected() {
+        let mut data = MountData::new();
+        data.push("size", "1024").unwrap();
+        let err = data.push("size", "2048").unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate mount data key: size"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn mount_data_preserves_insertion_order() {
+        let mut data = MountData::new();
+        data.push("subset", "pid").unwrap();
+        data.push("hidepid", "invisible").unwrap();
+        assert_eq!(
+            data.to_string(),
+            Some("subset=pid,hidepid=invisible".to_string())
+        );
+    }
 }
