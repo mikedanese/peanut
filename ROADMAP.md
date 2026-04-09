@@ -41,8 +41,6 @@ What's next for pnut, roughly in priority order.
 
 ### Unprivileged
 
-- **PR_SET_MDWE** — opt-in W^X enforcement (6.3+). Deny write+execute
-  mappings. Breaks JIT workloads, so must be opt-in.
 - **mseal(2)** — opt-in memory sealing (6.10+). Prevent VMA manipulation
   after setup.
 - **New mount API** — `fsopen`/`fsconfig`/`fsmount` for TOCTOU-free VFS

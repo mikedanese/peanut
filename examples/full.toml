@@ -14,6 +14,7 @@ no_new_privs = true            # PR_SET_NO_NEW_PRIVS — block setuid/fscaps via
 # disable_tsc = false          # Disable RDTSC/RDTSCP (x86 only, causes SIGSEGV)
 # dumpable = false             # PR_SET_DUMPABLE — prevents ptrace and /proc/pid/mem access
 # forward_signals = true       # Forward signals to child (false = SIGKILL on any signal)
+# mdwe = false                 # W^X enforcement — breaks JIT (requires kernel >= 6.3)
 
 # All namespaces default to true except time. Override to disable:
 # [namespaces]

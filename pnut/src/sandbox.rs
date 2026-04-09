@@ -81,6 +81,11 @@ pub struct ProcessOptions {
     /// When `false`, any signal to the supervisor kills the child with
     /// SIGKILL. Default: `true`.
     pub forward_signals: bool,
+    /// Set `PR_SET_MDWE` (Memory-Deny-Write-Execute). Denies creating
+    /// writable+executable mappings and converting writable mappings to
+    /// executable. Breaks JIT workloads. Requires kernel >= 6.3.
+    /// Default: `false`.
+    pub mdwe: bool,
 }
 
 impl Default for ProcessOptions {
@@ -92,6 +97,7 @@ impl Default for ProcessOptions {
             disable_tsc: false,
             dumpable: false,
             forward_signals: true,
+            mdwe: false,
         }
     }
 }
@@ -602,6 +608,18 @@ fn run_child_setup(sandbox: &Sandbox) -> ! {
         if ret != 0 {
             eprintln!(
                 "pnut: failed to set PR_SET_NO_NEW_PRIVS: {}",
+                std::io::Error::last_os_error()
+            );
+            std::process::exit(126);
+        }
+    }
+
+    if sandbox.process.mdwe {
+        let ret =
+            unsafe { libc::prctl(libc::PR_SET_MDWE, libc::PR_MDWE_REFUSE_EXEC_GAIN, 0, 0, 0) };
+        if ret != 0 {
+            eprintln!(
+                "pnut: failed to set PR_SET_MDWE: {}",
                 std::io::Error::last_os_error()
             );
             std::process::exit(126);

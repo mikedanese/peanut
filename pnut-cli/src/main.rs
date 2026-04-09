@@ -79,6 +79,8 @@ struct SettingsConfig {
     dumpable: bool,
     #[serde(default = "default_true")]
     forward_signals: bool,
+    #[serde(default)]
+    mdwe: bool,
 }
 
 impl Default for SettingsConfig {
@@ -94,6 +96,7 @@ impl Default for SettingsConfig {
             disable_tsc: false,
             dumpable: false,
             forward_signals: true,
+            mdwe: false,
         }
     }
 }
@@ -577,6 +580,7 @@ fn sandbox_from_config(config: SandboxConfig) -> Result<SandboxBuilder> {
     builder.process().disable_tsc = settings.disable_tsc;
     builder.process().dumpable = settings.dumpable;
     builder.process().forward_signals = settings.forward_signals;
+    builder.process().mdwe = settings.mdwe;
 
     // Namespace config + hostname from settings.
     let ns_config = pnut::namespace::Config {

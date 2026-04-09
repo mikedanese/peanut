@@ -65,6 +65,12 @@ General sandbox settings. All fields are optional.
 	When *false*, any signal to the supervisor kills the child with SIGKILL.
 	Only applies in *once* mode. Default: *true*.
 
+*mdwe* (bool)
+	Set PR_SET_MDWE (Memory-Deny-Write-Execute). Denies creating writable
+	and executable mappings simultaneously, and converting writable mappings
+	to executable. Breaks JIT workloads (V8, LuaJIT, etc.). Requires
+	kernel >= 6.3. Default: *false*.
+
 ## [namespaces]
 
 Controls which Linux namespaces are created. All fields are booleans.
