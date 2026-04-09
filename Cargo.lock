@@ -299,7 +299,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kafel"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "pest",
@@ -428,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "pnut"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "caps",
  "kafel",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "pnut-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
