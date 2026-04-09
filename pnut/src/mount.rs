@@ -4,11 +4,9 @@ mod dev;
 mod syscall;
 
 use crate::error::{Error, Stage};
-use nix::mount::{MntFlags, MsFlags, mount, umount2};
-use nix::unistd::pivot_root;
-use std::collections::HashSet;
+use std::ffi::CString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::os::fd::{AsFd, BorrowedFd};
 use std::slice;
 
 use crate::Sandbox;
@@ -263,55 +261,99 @@ fn mnt_nix(context: impl Into<String>, e: nix::errno::Errno) -> Error {
 ///
 /// Called in the child process after fork.
 pub(crate) fn setup_filesystem(sandbox: &Sandbox) -> Result<(), Error> {
-    mount(
-        None::<&str>,
-        "/",
-        None::<&str>,
-        MsFlags::MS_REC | MsFlags::MS_PRIVATE,
-        None::<&str>,
-    )
-    .map_err(|e| mnt_nix("failed to make mount tree recursively private", e))?;
+    // Make the entire mount tree recursively private so that mount changes
+    // in this namespace don't propagate to the parent. Uses mount_setattr()
+    // with the propagation field set to MS_PRIVATE and AT_RECURSIVE to apply
+    // to all mount points.
+    let at_fdcwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
+    let mut prop_attr = syscall::MountAttr::new();
+    prop_attr.propagation = syscall::MS_PRIVATE;
+    syscall::mount_setattr(at_fdcwd, c"/", syscall::AT_RECURSIVE, &prop_attr)
+        .map_err(|e| mnt_nix("failed to make mount tree recursively private", e))?;
 
-    let new_root = PathBuf::from("/tmp/pnut-newroot");
-    fs::create_dir_all(&new_root).map_err(|e| mnt("failed to create new root directory", e))?;
+    let new_root = "/tmp/pnut-newroot";
+    let new_root_cstr = CString::new(new_root).unwrap();
 
-    mount(
-        Some("tmpfs"),
-        &new_root,
-        Some("tmpfs"),
-        MsFlags::empty(),
-        None::<&str>,
-    )
-    .map_err(|e| mnt_nix("failed to mount tmpfs as new root", e))?;
+    // Create the new root directory using mkdir(2)
+    let ret = unsafe { libc::mkdir(new_root_cstr.as_ptr(), 0o755) };
+    if ret < 0 {
+        let err = nix::errno::Errno::last();
+        if err != nix::errno::Errno::EEXIST {
+            return Err(mnt_nix("failed to create new root directory", err));
+        }
+    }
 
-    let put_old = new_root.join(PUT_OLD);
-    fs::create_dir_all(&put_old).map_err(|e| mnt("failed to create put_old directory", e))?;
+    // Create the root tmpfs using the new mount API:
+    // fsopen("tmpfs") -> fsconfig(CMD_CREATE) -> fsmount() -> move_mount()
+    let fs_fd = syscall::fsopen(c"tmpfs").map_err(|e| mnt_nix("fsopen(\"tmpfs\") failed", e))?;
 
-    let staging = new_root.join(CONTENT_STAGING);
-    fs::create_dir_all(&staging)
-        .map_err(|e| mnt("failed to create content staging directory", e))?;
+    syscall::fsconfig_create(fs_fd.as_fd()).map_err(|(errno, log)| {
+        let mut ctx = "fsconfig(CMD_CREATE) for root tmpfs failed".to_string();
+        if let Some(msg) = log {
+            ctx.push_str(": ");
+            ctx.push_str(&msg);
+        }
+        mnt_nix(ctx, errno)
+    })?;
+
+    let mnt_fd = syscall::fsmount(fs_fd.as_fd(), 0)
+        .map_err(|e| mnt_nix("fsmount() for root tmpfs failed", e))?;
+
+    // move_mount the detached tmpfs to the new_root path
+    syscall::move_mount_to_path(mnt_fd.as_fd(), &new_root_cstr)
+        .map_err(|e| mnt_nix("move_mount() for root tmpfs failed", e))?;
+
+    // Open the root tmpfs as a directory fd for fd-relative operations
+    let root_fd = syscall::openat_dir(at_fdcwd, &new_root_cstr)
+        .map_err(|e| mnt_nix("failed to open root tmpfs as directory fd", e))?;
+
+    // Create .old_root and content staging directories relative to root_fd
+    syscall::mkdirat_all(root_fd.as_fd(), PUT_OLD)
+        .map_err(|e| mnt_nix("failed to create put_old directory", e))?;
+    syscall::mkdirat_all(root_fd.as_fd(), CONTENT_STAGING)
+        .map_err(|e| mnt_nix("failed to create content staging directory", e))?;
+
+    // Open the staging directory for content injection
+    let staging_cstr = CString::new(CONTENT_STAGING).unwrap();
+    let staging_fd = syscall::openat_dir(root_fd.as_fd(), &staging_cstr)
+        .map_err(|e| mnt_nix("failed to open staging directory", e))?;
 
     let mut content_idx: usize = 0;
     for (i, entry) in sandbox.mount_table().iter().enumerate() {
-        process_mount_entry(entry, &new_root, &staging, &mut content_idx)
+        process_mount_entry(entry, root_fd.as_fd(), staging_fd.as_fd(), &mut content_idx)
             .map_err(|e| Error::Other(format!("failed to process mount entry {i}: {e}")))?;
     }
 
-    dev::setup_dev(&new_root)?;
+    dev::setup_dev(root_fd.as_fd())?;
 
-    pivot_root(&new_root, &put_old).map_err(|e| Error::Setup {
+    // fd-based pivot_root: fchdir(root_fd) + pivot_root(".", ".")
+    // This avoids path-based operations entirely.
+    syscall::fchdir(root_fd.as_fd()).map_err(|e| Error::Setup {
+        stage: Stage::Pivot,
+        context: "fchdir to new root failed".into(),
+        source: e.into(),
+    })?;
+
+    syscall::pivot_root(c".", c".").map_err(|e| Error::Setup {
         stage: Stage::Pivot,
         context: "pivot_root failed".into(),
         source: e.into(),
     })?;
 
-    let old_root_inside = PathBuf::from("/").join(PUT_OLD);
-    umount2(&old_root_inside, MntFlags::MNT_DETACH)
+    // After pivot_root(".", "."), the old root is stacked on top of the new root.
+    // Unmount it with MNT_DETACH to lazily clean up.
+    syscall::umount2(c".", syscall::MNT_DETACH)
         .map_err(|e| mnt_nix("failed to unmount old root", e))?;
-    let _ = fs::remove_dir(&old_root_inside);
 
-    let staging_inside = PathBuf::from("/").join(CONTENT_STAGING);
-    let _ = fs::remove_dir_all(&staging_inside);
+    // Remove the put_old directory (it's now at /.old_root in the new root)
+    let _ = syscall::unlinkat(
+        at_fdcwd,
+        &CString::new(format!("/{PUT_OLD}")).unwrap(),
+        libc::AT_REMOVEDIR,
+    );
+
+    // Clean up the staging directory
+    clean_staging_dir();
 
     let cwd = sandbox.working_dir();
     std::env::set_current_dir(cwd).map_err(|e| mnt(format!("failed to chdir to {cwd}"), e))?;
@@ -319,25 +361,32 @@ pub(crate) fn setup_filesystem(sandbox: &Sandbox) -> Result<(), Error> {
     Ok(())
 }
 
+/// Remove the content staging directory and its contents.
+fn clean_staging_dir() {
+    let staging = format!("/{CONTENT_STAGING}");
+    // Best-effort cleanup — ignore errors
+    let _ = fs::remove_dir_all(&staging);
+}
+
 fn process_mount_entry(
     entry: &Entry,
-    new_root: &Path,
-    staging: &Path,
+    root_fd: BorrowedFd<'_>,
+    staging_fd: BorrowedFd<'_>,
     content_idx: &mut usize,
 ) -> Result<(), Error> {
     if let Some(ref content) = entry.content {
-        return process_content_entry(entry, content, new_root, staging, content_idx);
+        return process_content_entry(entry, content, root_fd, staging_fd, content_idx);
     }
 
     if entry.bind {
-        return process_bind_mount(entry, new_root);
+        return process_bind_mount(entry, root_fd);
     }
 
     if let Some(ref mount_type) = entry.mount_type {
         return match mount_type.as_str() {
-            "tmpfs" => process_tmpfs_mount(entry, new_root),
-            "proc" => process_proc_mount(entry, new_root),
-            "mqueue" => process_mqueue_mount(entry, new_root),
+            "tmpfs" => process_tmpfs_mount(entry, root_fd),
+            "proc" => process_proc_mount(entry, root_fd),
+            "mqueue" => process_mqueue_mount(entry, root_fd),
             other => Err(Error::Other(format!("unsupported mount type: {other}"))),
         };
     }
@@ -347,7 +396,7 @@ fn process_mount_entry(
     ))
 }
 
-fn process_bind_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
+fn process_bind_mount(entry: &Entry, root_fd: BorrowedFd<'_>) -> Result<(), Error> {
     let src = entry
         .src
         .as_deref()
@@ -357,160 +406,200 @@ fn process_bind_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
         .as_deref()
         .ok_or_else(|| Error::Other("bind mount requires a dst field".into()))?;
 
-    let target = new_root.join(dst.trim_start_matches('/'));
-    ensure_mount_point(&target, src)?;
+    let rel_dst = dst.trim_start_matches('/');
+    ensure_mount_point(root_fd, rel_dst, src)?;
 
-    mount(
-        Some(src),
-        &target,
-        None::<&str>,
-        MsFlags::MS_BIND | MsFlags::MS_REC,
-        None::<&str>,
-    )
-    .map_err(|e| mnt_nix(format!("bind mount {src} -> {dst} failed"), e))?;
-
-    if entry.read_only {
-        mount(
-            None::<&str>,
-            &target,
-            None::<&str>,
-            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC,
-            None::<&str>,
+    // Clone the source mount tree using open_tree
+    let at_fdcwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
+    let src_cstr = CString::new(src).map_err(|e| {
+        mnt(
+            format!("invalid source path for bind mount {src}: {e}"),
+            std::io::Error::other(e),
         )
-        .map_err(|e| mnt_nix(format!("read-only remount of {dst} failed"), e))?;
+    })?;
+    let mnt_fd = syscall::open_tree(
+        at_fdcwd,
+        &src_cstr,
+        syscall::OPEN_TREE_CLONE | syscall::OPEN_TREE_CLOEXEC | syscall::AT_RECURSIVE,
+    )
+    .map_err(|e| mnt_nix(format!("open_tree for bind mount {src} -> {dst} failed"), e))?;
+
+    // Apply read-only on the detached mount BEFORE attaching — atomic, never visible as writable
+    if entry.read_only {
+        let mut attr = syscall::MountAttr::new();
+        attr.attr_set = syscall::MOUNT_ATTR_RDONLY;
+        syscall::mount_setattr(mnt_fd.as_fd(), c"", syscall::AT_EMPTY_PATH, &attr)
+            .map_err(|e| mnt_nix(format!("mount_setattr(RDONLY) for {dst} failed"), e))?;
     }
+
+    // Attach at the target path relative to root_fd
+    let rel_dst_cstr = CString::new(rel_dst).map_err(|e| {
+        mnt(
+            format!("invalid target path for bind mount {dst}: {e}"),
+            std::io::Error::other(e),
+        )
+    })?;
+    syscall::move_mount_to_fd(mnt_fd.as_fd(), root_fd, &rel_dst_cstr).map_err(|e| {
+        mnt_nix(
+            format!("move_mount for bind mount {src} -> {dst} failed"),
+            e,
+        )
+    })?;
 
     Ok(())
 }
 
-fn process_tmpfs_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
+fn process_tmpfs_mount(entry: &Entry, root_fd: BorrowedFd<'_>) -> Result<(), Error> {
     let dst = entry
         .dst
         .as_deref()
         .ok_or_else(|| Error::Other("tmpfs mount requires a dst field".into()))?;
 
-    let target = new_root.join(dst.trim_start_matches('/'));
-    fs::create_dir_all(&target)
-        .map_err(|e| mnt(format!("failed to create directory for tmpfs at {dst}"), e))?;
+    let rel_dst = dst.trim_start_matches('/');
+    syscall::mkdirat_all(root_fd, rel_dst)
+        .map_err(|e| mnt_nix(format!("failed to create directory for tmpfs at {dst}"), e))?;
 
-    let mut data = MountData::new();
+    let fs_fd = syscall::fsopen(c"tmpfs")
+        .map_err(|e| mnt_nix(format!("fsopen(\"tmpfs\") for {dst} failed"), e))?;
+
     if let Some(size) = entry.size {
-        data.push("size", &size.to_string())?;
+        let size_str = CString::new(size.to_string()).unwrap();
+        syscall::fsconfig_set_string(fs_fd.as_fd(), c"size", &size_str)
+            .map_err(|e| mnt_nix(format!("fsconfig size for tmpfs at {dst} failed"), e))?;
     }
     if let Some(ref perms) = entry.perms {
         let mode = u32::from_str_radix(perms.trim_start_matches('0'), 8)
             .map_err(|e| Error::Other(format!("invalid permissions: {perms}: {e}")))?;
-        data.push("mode", &format!("{mode:04o}"))?;
+        let mode_str = CString::new(format!("{mode:04o}")).unwrap();
+        syscall::fsconfig_set_string(fs_fd.as_fd(), c"mode", &mode_str)
+            .map_err(|e| mnt_nix(format!("fsconfig mode for tmpfs at {dst} failed"), e))?;
     }
-    let data = data.to_string();
 
-    mount(
-        Some("tmpfs"),
-        &target,
-        Some("tmpfs"),
-        MsFlags::empty(),
-        data.as_deref(),
-    )
-    .map_err(|e| mnt_nix(format!("tmpfs mount at {dst} failed"), e))?;
+    syscall::fsconfig_create(fs_fd.as_fd()).map_err(|(errno, log)| {
+        let mut ctx = format!("fsconfig(CMD_CREATE) for tmpfs at {dst} failed");
+        if let Some(msg) = log {
+            ctx.push_str(": ");
+            ctx.push_str(&msg);
+        }
+        mnt_nix(ctx, errno)
+    })?;
+
+    let mnt_fd = syscall::fsmount(fs_fd.as_fd(), 0)
+        .map_err(|e| mnt_nix(format!("fsmount() for tmpfs at {dst} failed"), e))?;
+
+    // Apply read-only on the detached mount before attaching — atomic, never visible as writable
+    if entry.read_only {
+        let mut attr = syscall::MountAttr::new();
+        attr.attr_set = syscall::MOUNT_ATTR_RDONLY;
+        syscall::mount_setattr(mnt_fd.as_fd(), c"", syscall::AT_EMPTY_PATH, &attr).map_err(
+            |e| {
+                mnt_nix(
+                    format!("mount_setattr(RDONLY) for tmpfs at {dst} failed"),
+                    e,
+                )
+            },
+        )?;
+    }
+
+    let rel_dst_cstr = CString::new(rel_dst).map_err(|e| {
+        mnt(
+            format!("invalid path for tmpfs at {dst}: {e}"),
+            std::io::Error::other(e),
+        )
+    })?;
+    syscall::move_mount_to_fd(mnt_fd.as_fd(), root_fd, &rel_dst_cstr)
+        .map_err(|e| mnt_nix(format!("move_mount() for tmpfs at {dst} failed"), e))?;
 
     Ok(())
 }
 
-/// Builder for mount data strings (the `data` argument to `mount(2)`).
-///
-/// Collects key=value pairs and joins them with commas.
-/// Returns `None` when empty. Rejects duplicate keys.
-struct MountData {
-    parts: Vec<String>,
-    keys: HashSet<String>,
-}
-
-impl MountData {
-    fn new() -> Self {
-        Self {
-            parts: Vec::new(),
-            keys: HashSet::new(),
-        }
-    }
-
-    fn push(&mut self, key: &str, value: &str) -> Result<(), Error> {
-        if !self.keys.insert(key.to_string()) {
-            return Err(Error::Other(format!("duplicate mount data key: {key}")));
-        }
-        self.parts.push(format!("{key}={value}"));
-        Ok(())
-    }
-
-    fn to_string(&self) -> Option<String> {
-        if self.parts.is_empty() {
-            None
-        } else {
-            Some(self.parts.join(","))
-        }
-    }
-}
-
-fn process_proc_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
+fn process_proc_mount(entry: &Entry, root_fd: BorrowedFd<'_>) -> Result<(), Error> {
     let dst = entry
         .dst
         .as_deref()
         .ok_or_else(|| Error::Other("proc mount requires a dst field".into()))?;
 
-    let target = new_root.join(dst.trim_start_matches('/'));
-    fs::create_dir_all(&target)
-        .map_err(|e| mnt(format!("failed to create directory for proc at {dst}"), e))?;
+    let rel_dst = dst.trim_start_matches('/');
+    syscall::mkdirat_all(root_fd, rel_dst)
+        .map_err(|e| mnt_nix(format!("failed to create directory for proc at {dst}"), e))?;
 
-    let mut data = MountData::new();
+    let fs_fd = syscall::fsopen(c"proc")
+        .map_err(|e| mnt_nix(format!("fsopen(\"proc\") for {dst} failed"), e))?;
+
     if let Some(subset) = &entry.proc_subset {
-        data.push(
-            "subset",
-            match subset {
-                ProcSubset::Pid => "pid",
-            },
-        )?;
+        let value = match subset {
+            ProcSubset::Pid => c"pid",
+        };
+        syscall::fsconfig_set_string(fs_fd.as_fd(), c"subset", value)
+            .map_err(|e| mnt_nix(format!("fsconfig subset for proc at {dst} failed"), e))?;
     }
     if let Some(hidepid) = &entry.hidepid {
-        data.push(
-            "hidepid",
-            match hidepid {
-                HidePid::Visible => "0",
-                HidePid::Hidden => "1",
-                HidePid::Invisible => "invisible",
-            },
-        )?;
+        let value: &std::ffi::CStr = match hidepid {
+            HidePid::Visible => c"0",
+            HidePid::Hidden => c"1",
+            HidePid::Invisible => c"invisible",
+        };
+        syscall::fsconfig_set_string(fs_fd.as_fd(), c"hidepid", value)
+            .map_err(|e| mnt_nix(format!("fsconfig hidepid for proc at {dst} failed"), e))?;
     }
-    let data = data.to_string();
 
-    mount(
-        Some("proc"),
-        &target,
-        Some("proc"),
-        MsFlags::empty(),
-        data.as_deref(),
-    )
-    .map_err(|e| mnt_nix(format!("proc mount at {dst} failed"), e))?;
+    syscall::fsconfig_create(fs_fd.as_fd()).map_err(|(errno, log)| {
+        let mut ctx = format!("fsconfig(CMD_CREATE) for proc at {dst} failed");
+        if let Some(msg) = log {
+            ctx.push_str(": ");
+            ctx.push_str(&msg);
+        }
+        mnt_nix(ctx, errno)
+    })?;
+
+    let mnt_fd = syscall::fsmount(fs_fd.as_fd(), 0)
+        .map_err(|e| mnt_nix(format!("fsmount() for proc at {dst} failed"), e))?;
+
+    let rel_dst_cstr = CString::new(rel_dst).map_err(|e| {
+        mnt(
+            format!("invalid path for proc at {dst}: {e}"),
+            std::io::Error::other(e),
+        )
+    })?;
+    syscall::move_mount_to_fd(mnt_fd.as_fd(), root_fd, &rel_dst_cstr)
+        .map_err(|e| mnt_nix(format!("move_mount() for proc at {dst} failed"), e))?;
 
     Ok(())
 }
 
-fn process_mqueue_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
+fn process_mqueue_mount(entry: &Entry, root_fd: BorrowedFd<'_>) -> Result<(), Error> {
     let dst = entry
         .dst
         .as_deref()
         .ok_or_else(|| Error::Other("mqueue mount requires a dst field".into()))?;
 
-    let target = new_root.join(dst.trim_start_matches('/'));
-    fs::create_dir_all(&target)
-        .map_err(|e| mnt(format!("failed to create directory for mqueue at {dst}"), e))?;
+    let rel_dst = dst.trim_start_matches('/');
+    syscall::mkdirat_all(root_fd, rel_dst)
+        .map_err(|e| mnt_nix(format!("failed to create directory for mqueue at {dst}"), e))?;
 
-    mount(
-        Some("mqueue"),
-        &target,
-        Some("mqueue"),
-        MsFlags::empty(),
-        None::<&str>,
-    )
-    .map_err(|e| mnt_nix(format!("mqueue mount at {dst} failed"), e))?;
+    let fs_fd = syscall::fsopen(c"mqueue")
+        .map_err(|e| mnt_nix(format!("fsopen(\"mqueue\") for {dst} failed"), e))?;
+
+    syscall::fsconfig_create(fs_fd.as_fd()).map_err(|(errno, log)| {
+        let mut ctx = format!("fsconfig(CMD_CREATE) for mqueue at {dst} failed");
+        if let Some(msg) = log {
+            ctx.push_str(": ");
+            ctx.push_str(&msg);
+        }
+        mnt_nix(ctx, errno)
+    })?;
+
+    let mnt_fd = syscall::fsmount(fs_fd.as_fd(), 0)
+        .map_err(|e| mnt_nix(format!("fsmount() for mqueue at {dst} failed"), e))?;
+
+    let rel_dst_cstr = CString::new(rel_dst).map_err(|e| {
+        mnt(
+            format!("invalid path for mqueue at {dst}: {e}"),
+            std::io::Error::other(e),
+        )
+    })?;
+    syscall::move_mount_to_fd(mnt_fd.as_fd(), root_fd, &rel_dst_cstr)
+        .map_err(|e| mnt_nix(format!("move_mount() for mqueue at {dst} failed"), e))?;
 
     Ok(())
 }
@@ -518,8 +607,8 @@ fn process_mqueue_mount(entry: &Entry, new_root: &Path) -> Result<(), Error> {
 fn process_content_entry(
     entry: &Entry,
     content: &str,
-    new_root: &Path,
-    staging: &Path,
+    root_fd: BorrowedFd<'_>,
+    staging_fd: BorrowedFd<'_>,
     content_idx: &mut usize,
 ) -> Result<(), Error> {
     let dst = entry
@@ -527,124 +616,107 @@ fn process_content_entry(
         .as_deref()
         .ok_or_else(|| Error::Other("content mount requires a dst field".into()))?;
 
-    let staging_file = staging.join(format!("content-{content_idx}"));
+    // Write content to a staging file on the root tmpfs
+    let staging_name = format!("content-{content_idx}");
     *content_idx += 1;
-    fs::write(&staging_file, content)
-        .map_err(|e| mnt(format!("failed to write content for {dst}"), e))?;
-
-    let target = new_root.join(dst.trim_start_matches('/'));
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| mnt(format!("failed to create parent dirs for {dst}"), e))?;
-    }
-    fs::write(&target, "")
-        .map_err(|e| mnt(format!("failed to create mount point file for {dst}"), e))?;
-
-    mount(
-        Some(staging_file.as_path()),
-        &target,
-        None::<&str>,
-        MsFlags::MS_BIND,
-        None::<&str>,
-    )
-    .map_err(|e| mnt_nix(format!("content bind mount to {dst} failed"), e))?;
-
-    if entry.read_only {
-        mount(
-            None::<&str>,
-            &target,
-            None::<&str>,
-            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
-            None::<&str>,
+    let staging_cstr = CString::new(staging_name.as_str()).map_err(|e| {
+        mnt(
+            format!("invalid staging path for {dst}: {e}"),
+            std::io::Error::other(e),
         )
-        .map_err(|e| mnt_nix(format!("read-only remount of content at {dst} failed"), e))?;
+    })?;
+    syscall::write_file_at(staging_fd, &staging_cstr, content.as_bytes())
+        .map_err(|e| mnt_nix(format!("failed to write content for {dst}"), e))?;
+
+    // Create mount point for the content at the destination, relative to root_fd
+    let rel_dst = dst.trim_start_matches('/');
+    // Create parent directories
+    if let Some(parent_end) = rel_dst.rfind('/') {
+        let parent = &rel_dst[..parent_end];
+        if !parent.is_empty() {
+            syscall::mkdirat_all(root_fd, parent)
+                .map_err(|e| mnt_nix(format!("failed to create parent dirs for {dst}"), e))?;
+        }
     }
+    let rel_dst_cstr = CString::new(rel_dst).map_err(|e| {
+        mnt(
+            format!("invalid path for content at {dst}: {e}"),
+            std::io::Error::other(e),
+        )
+    })?;
+    syscall::create_file_at(root_fd, &rel_dst_cstr)
+        .map_err(|e| mnt_nix(format!("failed to create mount point file for {dst}"), e))?;
+
+    // Clone the staging file mount using open_tree.
+    // We need the absolute path of the staging file for open_tree since it works on
+    // mount-visible paths, not fd-relative. Build it from the staging dir fd.
+    // Actually, open_tree accepts dir_fd + relative path, so use staging_fd.
+    let mnt_fd = syscall::open_tree(
+        staging_fd,
+        &staging_cstr,
+        syscall::OPEN_TREE_CLONE | syscall::OPEN_TREE_CLOEXEC,
+    )
+    .map_err(|e| mnt_nix(format!("open_tree for content at {dst} failed"), e))?;
+
+    // Apply read-only on the detached mount before attaching
+    if entry.read_only {
+        let mut attr = syscall::MountAttr::new();
+        attr.attr_set = syscall::MOUNT_ATTR_RDONLY;
+        syscall::mount_setattr(mnt_fd.as_fd(), c"", syscall::AT_EMPTY_PATH, &attr).map_err(
+            |e| {
+                mnt_nix(
+                    format!("mount_setattr(RDONLY) for content at {dst} failed"),
+                    e,
+                )
+            },
+        )?;
+    }
+
+    // Attach at the target path relative to root_fd
+    syscall::move_mount_to_fd(mnt_fd.as_fd(), root_fd, &rel_dst_cstr)
+        .map_err(|e| mnt_nix(format!("move_mount for content at {dst} failed"), e))?;
 
     Ok(())
 }
 
-fn ensure_mount_point(target: &Path, source: &str) -> Result<(), Error> {
-    let source_meta = fs::metadata(source)
-        .map_err(|e| mnt(format!("source path does not exist: {source}"), e))?;
+/// Create a mount point (directory or file) relative to `root_fd` based on whether
+/// the source is a directory or file.
+fn ensure_mount_point(root_fd: BorrowedFd<'_>, rel_dst: &str, source: &str) -> Result<(), Error> {
+    let source_cstr = CString::new(source).map_err(|e| {
+        mnt(
+            format!("invalid source path: {source}: {e}"),
+            std::io::Error::other(e),
+        )
+    })?;
+    let at_fdcwd = unsafe { BorrowedFd::borrow_raw(libc::AT_FDCWD) };
+    let is_dir = syscall::is_dir_at(at_fdcwd, &source_cstr);
 
-    if source_meta.is_dir() {
-        fs::create_dir_all(target).map_err(|e| {
-            mnt(
-                format!(
-                    "failed to create directory mount point: {}",
-                    target.display()
-                ),
+    if is_dir {
+        syscall::mkdirat_all(root_fd, rel_dst).map_err(|e| {
+            mnt_nix(
+                format!("failed to create directory mount point: {rel_dst}"),
                 e,
             )
         })?;
     } else {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                mnt(
-                    format!("failed to create parent dirs for {}", target.display()),
-                    e,
-                )
-            })?;
+        // Create parent directories first
+        if let Some(parent_end) = rel_dst.rfind('/') {
+            let parent = &rel_dst[..parent_end];
+            if !parent.is_empty() {
+                syscall::mkdirat_all(root_fd, parent).map_err(|e| {
+                    mnt_nix(format!("failed to create parent dirs for {rel_dst}"), e)
+                })?;
+            }
         }
-        fs::write(target, "").map_err(|e| {
+        let rel_dst_cstr = CString::new(rel_dst).map_err(|e| {
             mnt(
-                format!("failed to create file mount point: {}", target.display()),
-                e,
+                format!("invalid path: {rel_dst}: {e}"),
+                std::io::Error::other(e),
             )
         })?;
+        syscall::create_file_at(root_fd, &rel_dst_cstr)
+            .map_err(|e| mnt_nix(format!("failed to create file mount point: {rel_dst}"), e))?;
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mount_data_empty() {
-        let data = MountData::new();
-        assert_eq!(data.to_string(), None);
-    }
-
-    #[test]
-    fn mount_data_single() {
-        let mut data = MountData::new();
-        data.push("size", "1024").unwrap();
-        assert_eq!(data.to_string(), Some("size=1024".to_string()));
-    }
-
-    #[test]
-    fn mount_data_multiple() {
-        let mut data = MountData::new();
-        data.push("newinstance", "1").unwrap();
-        data.push("ptmxmode", "0666").unwrap();
-        data.push("mode", "620").unwrap();
-        assert_eq!(
-            data.to_string(),
-            Some("newinstance=1,ptmxmode=0666,mode=620".to_string())
-        );
-    }
-
-    #[test]
-    fn mount_data_duplicate_key_rejected() {
-        let mut data = MountData::new();
-        data.push("size", "1024").unwrap();
-        let err = data.push("size", "2048").unwrap_err();
-        assert!(
-            err.to_string().contains("duplicate mount data key: size"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn mount_data_preserves_insertion_order() {
-        let mut data = MountData::new();
-        data.push("subset", "pid").unwrap();
-        data.push("hidepid", "invisible").unwrap();
-        assert_eq!(
-            data.to_string(),
-            Some("subset=pid,hidepid=invisible".to_string())
-        );
-    }
 }

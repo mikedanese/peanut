@@ -212,6 +212,8 @@ enum MountEntryConfig {
     Tmpfs {
         dst: String,
         #[serde(default)]
+        read_only: bool,
+        #[serde(default)]
         size: Option<u64>,
         #[serde(default)]
         perms: Option<String>,
@@ -253,11 +255,16 @@ impl From<MountEntryConfig> for pnut::mount::Entry {
                 proc_subset: None,
                 hidepid: None,
             },
-            MountEntryConfig::Tmpfs { dst, size, perms } => Self {
+            MountEntryConfig::Tmpfs {
+                dst,
+                read_only,
+                size,
+                perms,
+            } => Self {
                 src: None,
                 dst: Some(dst),
                 bind: false,
-                read_only: false,
+                read_only,
                 mount_type: Some("tmpfs".to_string()),
                 content: None,
                 size,
