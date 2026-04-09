@@ -10,9 +10,9 @@ use std::os::fd::{FromRawFd, OwnedFd};
 
 /// Controls which Linux namespaces are created via `clone3` flags.
 ///
-/// Defaults: user, PID, and mount are enabled. UTS, IPC, net, and cgroup
-/// are disabled. Setting `net = false` (the default) means the sandbox
-/// inherits the host network stack.
+/// Defaults: all namespaces are enabled except time. Set fields to `false`
+/// to opt out of specific isolation (e.g., `net = false` to inherit the
+/// host network stack).
 #[derive(Debug)]
 pub struct Config {
     /// User namespace. Required for unprivileged sandboxing. Default: `true`.
@@ -24,18 +24,18 @@ pub struct Config {
     /// Mount namespace. Required for filesystem isolation. Default: `true`.
     pub mount: bool,
 
-    /// UTS namespace. Required for `sandbox.hostname`. Default: `false`.
+    /// UTS namespace. Required for `sandbox.hostname`. Default: `true`.
     pub uts: bool,
 
     /// IPC namespace. Isolates System V IPC and POSIX message queues.
-    /// Default: `false`.
+    /// Default: `true`.
     pub ipc: bool,
 
     /// Network namespace. `true` = loopback only, `false` = inherit host
-    /// network. Default: `false`.
+    /// network. Default: `true`.
     pub net: bool,
 
-    /// Cgroup namespace. Isolates cgroup view. Default: `false`.
+    /// Cgroup namespace. Isolates cgroup view. Default: `true`.
     pub cgroup: bool,
 
     /// Time namespace. Virtualizes `CLOCK_MONOTONIC` and `CLOCK_BOOTTIME`.
@@ -59,10 +59,10 @@ impl Default for Config {
             user: true,
             pid: true,
             mount: true,
-            uts: false,
-            ipc: false,
-            net: false,
-            cgroup: false,
+            uts: true,
+            ipc: true,
+            net: true,
+            cgroup: true,
             time: false,
             hostname: None,
             allow_nested_userns: false,

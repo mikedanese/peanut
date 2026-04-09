@@ -80,19 +80,19 @@ Controls which Linux namespaces are created. All fields are booleans.
 	Default: *true*.
 
 *uts* (bool)
-	UTS namespace. Required if *sandbox.hostname* is set. Default: *false*.
+	UTS namespace. Required if *sandbox.hostname* is set. Default: *true*.
 
 *ipc* (bool)
 	IPC namespace. Isolates System V IPC and POSIX message queues.
-	Default: *false*.
+	Default: *true*.
 
 *net* (bool)
 	Network namespace. When *true*, the sandbox gets an isolated network stack
 	with only loopback. When *false*, it inherits the host network.
-	Default: *false*.
+	Default: *true*.
 
 *cgroup* (bool)
-	Cgroup namespace. Default: *false*.
+	Cgroup namespace. Default: *true*.
 
 *time* (bool)
 	Time namespace. Virtualizes CLOCK_MONOTONIC and CLOCK_BOOTTIME. Requires
@@ -109,47 +109,72 @@ Controls which Linux namespaces are created. All fields are booleans.
 An ordered array of filesystem mount operations. Each entry is a TOML
 array-of-tables element. Mounts are applied in order before *pivot_root*.
 
-Each entry must specify exactly one of: *bind*, *type*, or *content*.
+Each entry must have a *type* field that selects the mount variant. Available
+types and their fields:
+
+### type = "bind"
+
+Recursive bind mount (MS_BIND | MS_REC) from host into sandbox.
 
 *src* (string)
-	Source path on the host. Required for bind mounts.
+	Source path on the host. *Required*.
 
 *dst* (string)
 	Destination path inside the sandbox. *Required*.
 
-*bind* (bool)
-	Perform a recursive bind mount (MS_BIND | MS_REC). Default: *false*.
-
 *read_only* (bool)
-	Remount read-only (MS_RDONLY). Default: *false*.
+	Remount read-only (MS_RDONLY). Default: *true*.
 
-*type* (string)
-	Filesystem type for a fresh mount (e.g., *tmpfs*, *proc*, *mqueue*).
-	Mutually exclusive with *bind* and *content*.
+### type = "tmpfs"
+
+Mount a fresh tmpfs at the destination.
+
+*dst* (string)
+	Destination path inside the sandbox. *Required*.
+
+*size* (integer)
+	Size limit in bytes. Optional.
+
+*perms* (string)
+	Octal permission string (e.g., "1777"). Optional.
+
+### type = "proc"
+
+Mount procfs with hardened defaults.
+
+*dst* (string)
+	Destination path inside the sandbox. *Required*.
 
 *proc_subset* (string)
-	Proc mount only. The *subset=* mount option. Valid values: *"pid"*.
+	The *subset=* mount option. Valid values: *"pid"*.
 	When set to *"pid"* (default), only PID-related entries are visible;
 	*/proc/sys*, */proc/kallsyms*, */proc/net*, etc. are hidden.
 	Set to *null* to mount full proc. Requires kernel >= 5.8.
 
 *hidepid* (string)
-	Proc mount only. The *hidepid=* mount option. Valid values:
-	*"invisible"* (default), *"hidden"*, *"visible"*, or numeric
-	*"0"*, *"1"*, *"2"*. Controls visibility of other processes'
-	*/proc/<pid>* directories.
+	The *hidepid=* mount option. Valid values: *"invisible"* (default),
+	*"hidden"*, *"visible"*, or numeric *"0"*, *"1"*, *"2"*. Controls
+	visibility of other processes' */proc/<pid>* directories.
+
+### type = "mqueue"
+
+Mount a POSIX message queue filesystem.
+
+*dst* (string)
+	Destination path inside the sandbox. *Required*.
+
+### type = "file"
+
+Inject inline file content into the sandbox filesystem.
+
+*dst* (string)
+	Destination path inside the sandbox. *Required*.
 
 *content* (string)
-	Inline file content. A regular file is created at *dst* with this content.
-	Mutually exclusive with *bind* and *type*.
+	File content to write. *Required*.
 
-*size* (integer)
-	Size limit in bytes for *tmpfs* mounts. Only meaningful when
-	*type = "tmpfs"*.
-
-*perms* (string)
-	Octal permission string for *tmpfs* mounts (e.g., "0700"). Only
-	meaningful when *type = "tmpfs"*.
+*read_only* (bool)
+	Make the injected file read-only. Default: *true*.
 
 ## [uid_map]
 
@@ -342,22 +367,22 @@ outside = 1000
 count = 1
 
 [[mount]]
+type = "bind"
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
 
 [[mount]]
-dst = "/tmp"
 type = "tmpfs"
+dst = "/tmp"
 size = 67108864
 perms = "1777"
 
 [[mount]]
-dst = "/proc"
 type = "proc"
+dst = "/proc"
 
 [[mount]]
+type = "file"
 dst = "/etc/hostname"
 content = "sandbox"
 

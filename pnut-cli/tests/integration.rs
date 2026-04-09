@@ -65,32 +65,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -467,6 +462,7 @@ fn content_injection() {
 {base}
 
 [[mount]]
+type = "file"
 dst = "/etc/resolv.conf"
 content = "nameserver 8.8.8.8\n"
 "#,
@@ -729,6 +725,7 @@ fn adversarial_write_to_readonly_content_injection() {
 {base}
 
 [[mount]]
+type = "file"
 dst = "/etc/hostname"
 content = "sandbox\n"
 read_only = true
@@ -762,10 +759,12 @@ fn adversarial_multiple_content_injections() {
 {base}
 
 [[mount]]
+type = "file"
 dst = "/etc/resolv.conf"
 content = "nameserver 1.1.1.1\n"
 
 [[mount]]
+type = "file"
 dst = "/etc/hostname"
 content = "myhost\n"
 "#,
@@ -1019,32 +1018,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -1191,7 +1185,8 @@ count = 1
 [[mount]]
 src = "/this/path/does/not/exist/at/all"
 dst = "/mnt/test"
-bind = true
+type = "bind"
+read_only = false
 "#
     );
     let out = pnut_with_config(&config)
@@ -1251,32 +1246,27 @@ set = {{ PATH = "/usr/bin:/bin", HOME = "/" }}
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -1287,6 +1277,7 @@ type = "proc"
 dst = "/proc"
 
 [[mount]]
+type = "file"
 dst = "/etc/hostname"
 content = "perftest\n"
 "#
@@ -1398,32 +1389,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -1480,32 +1466,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -1687,32 +1668,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -1725,10 +1701,12 @@ type = "proc"
 dst = "/proc"
 
 [[mount]]
+type = "file"
 dst = "/etc/resolv.conf"
 content = "nameserver 8.8.8.8\nnameserver 1.1.1.1\n"
 
 [[mount]]
+type = "file"
 dst = "/etc/hostname"
 content = "POPCORN\n"
 read_only = true
@@ -1895,7 +1873,8 @@ count = 1
 [[mount]]
 src = "/absolutely/nonexistent/path"
 dst = "/mnt/test"
-bind = true
+type = "bind"
+read_only = false
 "#
     );
     let out = pnut_with_config(&config)
@@ -1938,32 +1917,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -2034,32 +2008,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -2345,32 +2314,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -2752,7 +2716,7 @@ fn disable_tsc_kills_rdtsc() {
     let uid = current_uid();
     let gid = current_gid();
     let config = format!(
-        "{}\n[sandbox]\ndisable_tsc = true\n\n[[mount]]\nsrc = \"{bin_str}\"\ndst = \"/test/rdtsc\"\nbind = true\nread_only = true\n",
+        "{}\n[sandbox]\ndisable_tsc = true\n\n[[mount]]\ntype = \"bind\"\nsrc = \"{bin_str}\"\ndst = \"/test/rdtsc\"\n",
         filesystem_config_base(uid, gid)
     );
 
@@ -2782,7 +2746,7 @@ fn disable_tsc_off_allows_rdtsc() {
     let uid = current_uid();
     let gid = current_gid();
     let config = format!(
-        "{}\n\n[[mount]]\nsrc = \"{bin_str}\"\ndst = \"/test/rdtsc\"\nbind = true\nread_only = true\n",
+        "{}\n\n[[mount]]\ntype = \"bind\"\nsrc = \"{bin_str}\"\ndst = \"/test/rdtsc\"\n",
         filesystem_config_base(uid, gid)
     );
 

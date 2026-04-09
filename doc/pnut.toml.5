@@ -5,7 +5,7 @@
 .nh
 .ad l
 .\" Begin generated content:
-.TH "pnut.toml" "5" "2026-04-08"
+.TH "pnut.toml" "5" "2026-04-09"
 .P
 .SH NAME
 .P
@@ -89,6 +89,13 @@ Set PR_SET_DUMPABLE.\& When \fBfalse\fR, prevents same-UID ptrace and
 \fB/proc/<pid>/mem\fR access from outside the sandbox.\& Default: \fBfalse\fR.\&
 .P
 .RE
+\fBforward_signals\fR (bool)
+.RS 4
+Forward signals received by the supervisor to the sandboxed child.\&
+When \fBfalse\fR, any signal to the supervisor kills the child with SIGKILL.\&
+Only applies in \fBonce\fR mode.\& Default: \fBtrue\fR.\&
+.P
+.RE
 .SS [namespaces]
 .P
 Controls which Linux namespaces are created.\& All fields are booleans.\&
@@ -111,25 +118,25 @@ Default: \fBtrue\fR.\&
 .RE
 \fButs\fR (bool)
 .RS 4
-UTS namespace.\& Required if \fBsandbox.\&hostname\fR is set.\& Default: \fBfalse\fR.\&
+UTS namespace.\& Required if \fBsandbox.\&hostname\fR is set.\& Default: \fBtrue\fR.\&
 .P
 .RE
 \fBipc\fR (bool)
 .RS 4
 IPC namespace.\& Isolates System V IPC and POSIX message queues.\&
-Default: \fBfalse\fR.\&
+Default: \fBtrue\fR.\&
 .P
 .RE
 \fBnet\fR (bool)
 .RS 4
 Network namespace.\& When \fBtrue\fR, the sandbox gets an isolated network stack
 with only loopback.\& When \fBfalse\fR, it inherits the host network.\&
-Default: \fBfalse\fR.\&
+Default: \fBtrue\fR.\&
 .P
 .RE
 \fBcgroup\fR (bool)
 .RS 4
-Cgroup namespace.\& Default: \fBfalse\fR.\&
+Cgroup namespace.\& Default: \fBtrue\fR.\&
 .P
 .RE
 \fBtime\fR (bool)
@@ -151,374 +158,6 @@ Default: \fBfalse\fR.\&
 An ordered array of filesystem mount operations.\& Each entry is a TOML
 array-of-tables element.\& Mounts are applied in order before \fBpivot_root\fR.\&
 .P
-Each entry must specify exactly one of: \fBbind\fR, \fBtype\fR, or \fBcontent\fR.\&
+Each entry must have a \fBtype\fR field that selects the mount variant.\& Available
+types and their fields:
 .P
-\fBsrc\fR (string)
-.RS 4
-Source path on the host.\& Required for bind mounts.\&
-.P
-.RE
-\fBdst\fR (string)
-.RS 4
-Destination path inside the sandbox.\& \fBRequired\fR.\&
-.P
-.RE
-\fBbind\fR (bool)
-.RS 4
-Perform a recursive bind mount (MS_BIND | MS_REC).\& Default: \fBfalse\fR.\&
-.P
-.RE
-\fBread_only\fR (bool)
-.RS 4
-Remount read-only (MS_RDONLY).\& Default: \fBfalse\fR.\&
-.P
-.RE
-\fBtype\fR (string)
-.RS 4
-Filesystem type for a fresh mount (e.\&g.\&, \fBtmpfs\fR, \fBproc\fR, \fBmqueue\fR).\&
-Mutually exclusive with \fBbind\fR and \fBcontent\fR.\&
-.P
-.RE
-\fBproc_subset\fR (string)
-.RS 4
-Proc mount only.\& The \fBsubset=\fR mount option.\& Valid values: \fB"pid"\fR.\&
-When set to \fB"pid"\fR (default), only PID-related entries are visible;
-\fB/proc/sys\fR, \fB/proc/kallsyms\fR, \fB/proc/net\fR, etc.\& are hidden.\&
-Set to \fBnull\fR to mount full proc.\& Requires kernel >= 5.\&8.\&
-.P
-.RE
-\fBhidepid\fR (string)
-.RS 4
-Proc mount only.\& The \fBhidepid=\fR mount option.\& Valid values:
-\fB"invisible"\fR (default), \fB"hidden"\fR, \fB"visible"\fR, or numeric
-\fB"0"\fR, \fB"1"\fR, \fB"2"\fR.\& Controls visibility of other processes'\&
-\fB/proc/<pid>\fR directories.\&
-.P
-.RE
-\fBcontent\fR (string)
-.RS 4
-Inline file content.\& A regular file is created at \fBdst\fR with this content.\&
-Mutually exclusive with \fBbind\fR and \fBtype\fR.\&
-.P
-.RE
-\fBsize\fR (integer)
-.RS 4
-Size limit in bytes for \fBtmpfs\fR mounts.\& Only meaningful when
-\fBtype = "tmpfs"\fR.\&
-.P
-.RE
-\fBperms\fR (string)
-.RS 4
-Octal permission string for \fBtmpfs\fR mounts (e.\&g.\&, "0700").\& Only
-meaningful when \fBtype = "tmpfs"\fR.\&
-.P
-.RE
-.SS [uid_map]
-.P
-Maps a host UID range into the sandbox.\& Typically required when
-\fBnamespaces.\&user = true\fR to give the sandboxed process a valid UID.\&
-.P
-\fBinside\fR (integer)
-.RS 4
-UID inside the sandbox.\& Default: \fB0\fR.\&
-.P
-.RE
-\fBoutside\fR (integer)
-.RS 4
-Host UID to map from.\& \fBRequired\fR.\&
-.P
-.RE
-\fBcount\fR (integer)
-.RS 4
-Number of consecutive UIDs to map.\& Default: \fB1\fR.\&
-.P
-.RE
-.SS [gid_map]
-.P
-Maps a host GID range into the sandbox.\& Same schema as \fB[uid_map]\fR.\&
-.P
-\fBinside\fR (integer)
-.RS 4
-GID inside the sandbox.\& Default: \fB0\fR.\&
-.P
-.RE
-\fBoutside\fR (integer)
-.RS 4
-Host GID to map from.\& \fBRequired\fR.\&
-.P
-.RE
-\fBcount\fR (integer)
-.RS 4
-Number of consecutive GIDs to map.\& Default: \fB1\fR.\&
-.P
-.RE
-.SS [env]
-.P
-Environment variable policy for the sandboxed process.\&
-.P
-\fBclear\fR (bool)
-.RS 4
-Clear all inherited environment variables before applying \fBset\fR and
-\fBkeep\fR.\& Default: \fBfalse\fR.\&
-.P
-.RE
-\fBset\fR (table)
-.RS 4
-Key-value pairs to set or override.\& Applied after \fBclear\fR and \fBkeep\fR.\&
-.P
-.nf
-.RS 4
-[env]
-clear = true
-
-[env\&.set]
-PATH = "/usr/bin:/bin"
-HOME = "/home/sandbox"
-.fi
-.RE
-.P
-.RE
-\fBkeep\fR (array of strings)
-.RS 4
-Host environment variables to preserve when \fBclear = true\fR.\& Ignored when
-\fBclear = false\fR (all variables are already inherited).\&
-.P
-.nf
-.RS 4
-[env]
-clear = true
-keep = ["TERM", "LANG"]
-.fi
-.RE
-.P
-.RE
-.SS [rlimits]
-.P
-Resource limits applied via \fBsetrlimit\fR(2).\& All fields are optional; omitted
-fields leave the inherited limit unchanged.\& For fields ending in \fB_mb\fR, the
-value is in mebibytes and is converted to bytes internally.\&
-.P
-\fBnofile\fR (integer)
-.RS 4
-RLIMIT_NOFILE.\& Maximum number of open file descriptors.\&
-.P
-.RE
-\fBnproc\fR (integer)
-.RS 4
-RLIMIT_NPROC.\& Maximum number of processes for the real user ID.\&
-.P
-.RE
-\fBfsize_mb\fR (integer)
-.RS 4
-RLIMIT_FSIZE.\& Maximum file size in MiB.\&
-.P
-.RE
-\fBstack_mb\fR (integer)
-.RS 4
-RLIMIT_STACK.\& Maximum stack size in MiB.\&
-.P
-.RE
-\fBas_mb\fR (integer)
-.RS 4
-RLIMIT_AS.\& Maximum virtual memory (address space) in MiB.\&
-.P
-.RE
-\fBcore_mb\fR (integer)
-.RS 4
-RLIMIT_CORE.\& Maximum core dump size in MiB.\&
-.P
-.RE
-\fBcpu\fR (integer)
-.RS 4
-RLIMIT_CPU.\& Maximum CPU time in seconds.\&
-.P
-.RE
-.SS [landlock]
-.P
-Landlock LSM filesystem access control.\& Restricts filesystem access beyond
-what mount namespace isolation provides.\& All fields are arrays of path strings.\&
-.P
-\fBallowed_read\fR (array of strings)
-.RS 4
-Paths where read access is permitted.\&
-.P
-.RE
-\fBallowed_write\fR (array of strings)
-.RS 4
-Paths where write access is permitted.\&
-.P
-.RE
-\fBallowed_execute\fR (array of strings)
-.RS 4
-Paths where execute access is permitted.\&
-.P
-.RE
-.SS [capabilities]
-.P
-Linux capability management.\& All capabilities are dropped by default.\&
-.P
-\fBkeep\fR (array of strings)
-.RS 4
-Capabilities to retain (e.\&g.\&, CAP_NET_BIND_SERVICE, CAP_SYS_PTRACE).\&
-Names are validated at build time.\&
-.P
-.RE
-.SS [fd]
-.P
-File descriptor policy.\&
-.P
-\fBclose_fds\fR (bool)
-.RS 4
-Close all file descriptors >= 3 that are not explicitly mapped.\&
-Default: \fBtrue\fR.\&
-.P
-.RE
-\fBmap\fR (array of tables)
-.RS 4
-Explicit FD remappings.\& Each entry has:
-.P
-\fBsrc\fR (integer)
-.RS 4
-Source file descriptor.\& \fBRequired\fR.\&
-.P
-.RE
-\fBdst\fR (integer)
-.RS 4
-Destination file descriptor.\& \fBRequired\fR.\& Must be unique across all
-mappings.\&
-.P
-.RE
-.RE
-.SS [run]
-.P
-Default command to execute if none is given on the command line.\& CLI arguments
-(after \fB--\fR) take priority over this section.\&
-.P
-\fBpath\fR (string)
-.RS 4
-Binary path to execute.\& \fBRequired\fR.\&
-.P
-.RE
-\fBargs\fR (array of strings)
-.RS 4
-Arguments to pass to the command.\& Default: empty.\&
-.P
-.RE
-\fBargv0\fR (string)
-.RS 4
-Override argv[0] for the command.\& Overrides \fBsandbox.\&argv0\fR when the
-\fB[run]\fR section command is used.\& Default: use \fBpath\fR as argv[0].\&
-.P
-.RE
-.SS seccomp_policy, seccomp_policy_file (top-level)
-.P
-Seccomp-bpf syscall filtering using a Kafel-inspired DSL.\& These two fields are
-mutually exclusive; specifying both is an error.\&
-.P
-\fBseccomp_policy\fR (string)
-.RS 4
-Inline seccomp policy string.\&
-.P
-.nf
-.RS 4
-seccomp_policy = """
-POLICY default {
-  ALLOW { read, write, exit, exit_group, brk, mmap, close }
-  DENY {}
-}
-USE default DEFAULT KILL
-"""
-.fi
-.RE
-.P
-.RE
-\fBseccomp_policy_file\fR (string)
-.RS 4
-Path to a file containing the seccomp policy.\&
-.P
-.RE
-.SH EXAMPLES
-.P
-A comprehensive configuration:
-.P
-.nf
-.RS 4
-[sandbox]
-hostname = "box"
-cwd = "/home/user"
-mode = "once"
-new_session = true
-die_with_parent = true
-
-[namespaces]
-user = true
-pid = true
-mount = true
-uts = true
-ipc = true
-net = true
-
-[uid_map]
-inside = 0
-outside = 1000
-count = 1
-
-[gid_map]
-inside = 0
-outside = 1000
-count = 1
-
-[[mount]]
-src = "/usr"
-dst = "/usr"
-bind = true
-read_only = true
-
-[[mount]]
-dst = "/tmp"
-type = "tmpfs"
-size = 67108864
-perms = "1777"
-
-[[mount]]
-dst = "/proc"
-type = "proc"
-
-[[mount]]
-dst = "/etc/hostname"
-content = "sandbox"
-
-[env]
-clear = true
-keep = ["TERM", "LANG"]
-
-[env\&.set]
-PATH = "/usr/bin:/bin"
-HOME = "/home/user"
-
-[rlimits]
-nofile = 256
-nproc = 64
-as_mb = 512
-
-[landlock]
-allowed_read = ["/usr", "/lib", "/lib64", "/etc"]
-allowed_write = ["/tmp"]
-allowed_execute = ["/usr/bin", "/bin"]
-
-[capabilities]
-keep = []
-
-[fd]
-close_fds = true
-
-[run]
-path = "/bin/sh"
-args = ["-i"]
-.fi
-.RE
-.P
-.SH SEE ALSO
-.P
-\fBpnut\fR(1), \fBtoml\fR(5), \fBsetrlimit\fR(2), \fBseccomp\fR(2), \fBlandlock\fR(7),
-\fBcapabilities\fR(7)

@@ -124,13 +124,13 @@ struct NamespaceConfig {
     pid: bool,
     #[serde(default = "default_true")]
     mount: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     uts: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     ipc: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     net: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     cgroup: bool,
     #[serde(default)]
     time: bool,
@@ -144,72 +144,168 @@ impl Default for NamespaceConfig {
             user: true,
             pid: true,
             mount: true,
-            uts: false,
-            ipc: false,
-            net: false,
-            cgroup: false,
+            uts: true,
+            ipc: true,
+            net: true,
+            cgroup: true,
             time: false,
             allow_nested_userns: false,
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ProcSubsetConfig {
+    Pid,
+}
+
+impl From<ProcSubsetConfig> for pnut::mount::ProcSubset {
+    fn from(c: ProcSubsetConfig) -> Self {
+        match c {
+            ProcSubsetConfig::Pid => Self::Pid,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum HidePidConfig {
+    #[serde(alias = "0")]
+    Visible,
+    #[serde(alias = "1")]
+    Hidden,
+    #[serde(alias = "2")]
+    Invisible,
+}
+
+impl From<HidePidConfig> for pnut::mount::HidePid {
+    fn from(c: HidePidConfig) -> Self {
+        match c {
+            HidePidConfig::Visible => Self::Visible,
+            HidePidConfig::Hidden => Self::Hidden,
+            HidePidConfig::Invisible => Self::Invisible,
+        }
+    }
+}
+
+fn default_proc_subset() -> Option<ProcSubsetConfig> {
+    Some(ProcSubsetConfig::Pid)
+}
+
+fn default_hidepid() -> Option<HidePidConfig> {
+    Some(HidePidConfig::Invisible)
+}
+
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MountEntryConfig {
-    #[serde(default)]
-    src: Option<String>,
-    #[serde(default)]
-    dst: Option<String>,
-    #[serde(default)]
-    bind: bool,
-    #[serde(default)]
-    read_only: bool,
-    #[serde(rename = "type", default)]
-    mount_type: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    size: Option<u64>,
-    #[serde(default)]
-    perms: Option<String>,
-    #[serde(default = "default_proc_subset")]
-    proc_subset: Option<String>,
-    #[serde(default = "default_hidepid")]
-    hidepid: Option<String>,
-}
-
-fn default_proc_subset() -> Option<String> {
-    Some("pid".to_string())
-}
-
-fn default_hidepid() -> Option<String> {
-    Some("invisible".to_string())
+#[serde(tag = "type", rename_all = "lowercase")]
+enum MountEntryConfig {
+    Bind {
+        src: String,
+        dst: String,
+        #[serde(default = "default_true")]
+        read_only: bool,
+    },
+    Tmpfs {
+        dst: String,
+        #[serde(default)]
+        size: Option<u64>,
+        #[serde(default)]
+        perms: Option<String>,
+    },
+    Proc {
+        dst: String,
+        #[serde(default = "default_proc_subset")]
+        proc_subset: Option<ProcSubsetConfig>,
+        #[serde(default = "default_hidepid")]
+        hidepid: Option<HidePidConfig>,
+    },
+    Mqueue {
+        dst: String,
+    },
+    File {
+        dst: String,
+        content: String,
+        #[serde(default = "default_true")]
+        read_only: bool,
+    },
 }
 
 impl From<MountEntryConfig> for pnut::mount::Entry {
     fn from(config: MountEntryConfig) -> Self {
-        let proc_subset = config.proc_subset.as_deref().map(|s| match s {
-            "pid" => pnut::mount::ProcSubset::Pid,
-            other => panic!("unknown proc_subset value: {other}"),
-        });
-        let hidepid = config.hidepid.as_deref().map(|s| match s {
-            "invisible" | "2" => pnut::mount::HidePid::Invisible,
-            "hidden" | "1" => pnut::mount::HidePid::Hidden,
-            "visible" | "0" => pnut::mount::HidePid::Visible,
-            other => panic!("unknown hidepid value: {other}"),
-        });
-        Self {
-            src: config.src,
-            dst: config.dst,
-            bind: config.bind,
-            read_only: config.read_only,
-            mount_type: config.mount_type,
-            content: config.content,
-            size: config.size,
-            perms: config.perms,
-            proc_subset,
-            hidepid,
+        match config {
+            MountEntryConfig::Bind {
+                src,
+                dst,
+                read_only,
+            } => Self {
+                src: Some(src),
+                dst: Some(dst),
+                bind: true,
+                read_only,
+                mount_type: None,
+                content: None,
+                size: None,
+                perms: None,
+                proc_subset: None,
+                hidepid: None,
+            },
+            MountEntryConfig::Tmpfs { dst, size, perms } => Self {
+                src: None,
+                dst: Some(dst),
+                bind: false,
+                read_only: false,
+                mount_type: Some("tmpfs".to_string()),
+                content: None,
+                size,
+                perms,
+                proc_subset: None,
+                hidepid: None,
+            },
+            MountEntryConfig::Proc {
+                dst,
+                proc_subset,
+                hidepid,
+            } => Self {
+                src: None,
+                dst: Some(dst),
+                bind: false,
+                read_only: false,
+                mount_type: Some("proc".to_string()),
+                content: None,
+                size: None,
+                perms: None,
+                proc_subset: proc_subset.map(Into::into),
+                hidepid: hidepid.map(Into::into),
+            },
+            MountEntryConfig::Mqueue { dst } => Self {
+                src: None,
+                dst: Some(dst),
+                bind: false,
+                read_only: false,
+                mount_type: Some("mqueue".to_string()),
+                content: None,
+                size: None,
+                perms: None,
+                proc_subset: None,
+                hidepid: None,
+            },
+            MountEntryConfig::File {
+                dst,
+                content,
+                read_only,
+            } => Self {
+                src: None,
+                dst: Some(dst),
+                bind: false,
+                read_only,
+                mount_type: None,
+                content: Some(content),
+                size: None,
+                perms: None,
+                proc_subset: None,
+                hidepid: None,
+            },
         }
     }
 }

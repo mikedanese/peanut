@@ -50,32 +50,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -117,7 +112,8 @@ count = 1
 [[mount]]
 src = "/nonexistent-path-that-does-not-exist"
 dst = "/mnt/test"
-bind = true
+type = "bind"
+read_only = false
 "#
     );
     let out = pnut_with_config(&config)

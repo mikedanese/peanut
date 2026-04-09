@@ -54,8 +54,7 @@ fn config_with_policy(base_config: &str, policy_dsl: &str) -> String {
 [[mount]]
 src = "{}"
 dst = "{}"
-bind = true
-read_only = true
+type = "bind"
 "#,
         base_config, policy_dir, policy_dir
     );
@@ -109,32 +108,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -174,32 +168,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -208,7 +197,8 @@ dst = "/tmp"
 [[mount]]
 src = "/proc"
 dst = "/proc"
-bind = true
+type = "bind"
+read_only = false
 "#
     )
 }
@@ -370,8 +360,7 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -470,8 +459,7 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -862,8 +850,7 @@ count = 1
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"

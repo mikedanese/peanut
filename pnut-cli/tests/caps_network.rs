@@ -54,32 +54,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -117,32 +112,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"
@@ -455,32 +445,27 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 src = "/sbin"
 dst = "/sbin"
-bind = true
-read_only = true
+type = "bind"
 
 [[mount]]
 type = "tmpfs"

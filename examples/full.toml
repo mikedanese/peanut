@@ -15,15 +15,10 @@ no_new_privs = true            # PR_SET_NO_NEW_PRIVS — block setuid/fscaps via
 # dumpable = false             # PR_SET_DUMPABLE — prevents ptrace and /proc/pid/mem access
 # forward_signals = true       # Forward signals to child (false = SIGKILL on any signal)
 
-[namespaces]
-user = true                    # User namespace — required for unprivileged mode
-pid = true                     # PID namespace — child becomes PID 1
-mount = true                   # Mount namespace — filesystem isolation via pivot_root
-uts = true                     # UTS namespace — required for sandbox.hostname
-ipc = true                     # IPC namespace — System V IPC, POSIX message queues
-net = true                     # Network namespace — true = loopback only
-cgroup = false                 # Cgroup namespace
-time = false                   # Time namespace — requires kernel >= 5.6
+# All namespaces default to true except time. Override to disable:
+# [namespaces]
+# net = false                  # Inherit host network instead of loopback-only
+# time = false                 # Time namespace — requires kernel >= 5.6 (default: false)
 # allow_nested_userns = false  # Allow creating nested user namespaces (default: blocked)
 
 # Map host UID 1000 → UID 0 inside the sandbox.
@@ -44,29 +39,25 @@ count = 1
 [[mount]]
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
+type = "bind"
 
 # Bind-mount host /lib read-only.
 [[mount]]
 src = "/lib"
 dst = "/lib"
-bind = true
-read_only = true
+type = "bind"
 
 # Bind-mount host /lib64 read-only (needed on x86_64).
 [[mount]]
 src = "/lib64"
 dst = "/lib64"
-bind = true
-read_only = true
+type = "bind"
 
 # Bind-mount host /bin read-only.
 [[mount]]
 src = "/bin"
 dst = "/bin"
-bind = true
-read_only = true
+type = "bind"
 
 # Mount proc filesystem.
 # proc_subset defaults to "pid" (hides /proc/sys, /proc/net, etc.)
@@ -93,6 +84,7 @@ perms = "0755"
 
 # Inline file content — write a custom /etc/hostname.
 [[mount]]
+type = "file"
 dst = "/etc/hostname"
 content = "sandbox"
 
