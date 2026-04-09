@@ -29,7 +29,7 @@ validate
 compile seccomp → BPF              
 build CStrings, buffers            
                                    
-    PreparedChild ──→ ChildSpec<'a>
+    Sandbox::prepare(&arena) → ChildSpec<'a>
                                    
          clone3()                  
            │                       

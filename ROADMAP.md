@@ -2,13 +2,35 @@
 
 What's next for pnut, roughly in priority order.
 
+## Done (recent)
+
+- **New mount API** — `fsopen`/`fsconfig`/`fsmount`/`move_mount`/`open_tree`/
+  `mount_setattr` for fd-based VFS construction. Eliminates TOCTOU races,
+  provides atomic flag application, and fd-relative tree construction.
+  `pivot_root(".", ".")` via fchdir.
+- **pnut-child integration** — `#![no_std]` child runtime is the sole
+  post-clone3 executor. Zero heap allocation after fork. Safe for library
+  use in multi-threaded processes.
+- **Structured child failure reporting** — `Error::ChildSetup` with
+  `ChildStage`, errno, detail, and human-readable message. Library users
+  get programmatic access to child failures instead of `Ok(126)`.
+- **Module consolidation** — config types unified into `config.rs`,
+  `TryFrom<SandboxBuilder> for Sandbox`, `MountEntry` as proper enum,
+  namespace/idmap/seccomp folded into `sandbox/`.
+- **Signal forwarding** — pidfd + signalfd poll loop for race-free
+  supervision, `pidfd_send_signal` for forwarding.
+- **Landlock ABI V2-V5** — refer, truncate, network (bind/connect),
+  ioctl_dev.
+- **PR_SET_MDWE** — W^X enforcement opt-in.
+- **Hardened proc** — `subset=pid`, `hidepid=invisible` defaults.
+
 ## Now
 
 - **Man page installation** — `pnut(1)` and `pnut.toml(5)` are written (scdoc
   source in `doc/`); need an install story (`make install` or similar).
 - **Landlock port ranges** — `allowed_bind` and `allowed_connect` currently
   take single ports only. Support range syntax (e.g. `"8000-8999"`) expanded
-  to individual `NetPort` rules.
+  to individual rules.
 
 ## Next
 
@@ -20,52 +42,34 @@ What's next for pnut, roughly in priority order.
 
 - **PR_SET_CHILD_SUBREAPER** — reap orphaned grandchildren when `pid = false`
   (no PID namespace). When `pid = true` (default), the kernel reparents orphans
-  to PID 1 inside the namespace. Needs careful design for library callers
-  where `waitpid(-1)` can steal unrelated children.
+  to PID 1 inside the namespace.
 
 ### Usability
 
 - **Seccomp policy usability** — better error messages when a policy fails to
   compile, with source location and context.
-- **Config validation improvements** — catch more mistakes at build time
-  (e.g., mount dst conflicts, missing library paths for bind mounts).
 - **High-level path access declarations** — a single directive like
-  `allow_read = ["/data"]` that auto-configures the underlying layers: bind
-  mount, Landlock allowlist, and seccomp policy (if path-relevant). Today you
-  have to configure `[[mount]]`, `[landlock]`, and potentially seccomp
-  separately for each path. This is the most common source of misconfiguration.
+  `allow_read = ["/data"]` that auto-configures bind mount + Landlock allowlist.
 - **Testing on more kernels** — CI coverage across kernel versions (5.11,
-  5.15 LTS, 6.x) to catch namespace behavior differences.
+  5.15 LTS, 6.x).
 
 ## Later
 
 ### Unprivileged
 
-- **mseal(2)** — opt-in memory sealing (6.10+). Prevent VMA manipulation
-  after setup.
-- **New mount API** — `fsopen`/`fsconfig`/`fsmount` for TOCTOU-free VFS
-  construction. Large implementation effort.
-- **Seccomp USER_NOTIF** — syscall brokering via supervisor IPC. Powerful
-  but expands trusted computing base. First use case: single-execve
-  enforcement — approve the first `execve` after filter installation via
-  `SECCOMP_USER_NOTIF_FLAG_CONTINUE`, deny subsequent ones. Currently pnut
-  blanket-allows execve in the filter.
-- **ID-mapped mounts** — `mount_setattr` for UID/GID translation on shared
-  directories (5.12+).
+- **mseal(2)** — opt-in memory sealing (6.10+).
+- **Seccomp USER_NOTIF** — syscall brokering via supervisor IPC.
+- **ID-mapped mounts** — `mount_setattr` for UID/GID translation (5.12+).
+- **Detached mount tree** — build entire mount tree in detached tmpfs,
+  attach only at pivot_root time.
 
 ### Privileged
 
-- **Cgroup v2 resource limits** — memory, CPU, PID, and IO limits.
-  Initially via delegated cgroup subtrees (unprivileged when the host
-  pre-delegates). Full cgroup management in privileged mode.
-  See [PRIVILEGED.md](PRIVILEGED.md).
-- **Privileged mode** — optional elevated-capability mode for features with
-  no unprivileged equivalent: veth networking, real UID transitions, device
-  control, nested userns denial via sysctl.
-  See [PRIVILEGED.md](PRIVILEGED.md).
-- **Network policy** — egress filtering via nftables when privileged mode
-  provides veth/macvlan plumbing.
-- **Filesystem image mounts** — mount squashfs/erofs images as sandbox roots.
+- **Cgroup v2 resource limits** — memory, CPU, PID, IO limits.
+- **Privileged mode** — optional elevated-capability mode for veth
+  networking, real UID transitions, device control.
+- **Network policy** — egress filtering via nftables with veth plumbing.
+- **Filesystem image mounts** — squashfs/erofs images as sandbox roots.
 
 ## Non-goals
 

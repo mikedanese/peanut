@@ -2,20 +2,17 @@
 //!
 //! [`SandboxBuilder`] is the mutable configuration builder. Call
 //! [`SandboxBuilder::build`] to validate and produce a [`Sandbox`],
-//! or [`SandboxBuilder::run`] to build and execute in one step.
+//! or use `Sandbox::try_from(builder)`.
 
-pub mod caps;
-pub mod env;
-pub mod error;
-pub mod fd;
-pub mod idmap;
-pub mod landlock;
-pub mod mount;
-pub mod namespace;
-mod net;
-pub mod rlimit;
-pub mod sandbox;
-mod seccomp;
+mod config;
+mod error;
+mod mount;
+mod sandbox;
 
-pub use error::{BuildError, Error, Stage};
-pub use sandbox::{Command, ProcessOptions, RunMode, Sandbox, SandboxBuilder, SeccompSource};
+pub use config::{
+    Capabilities, Capability, Environment, FdMapping, FileDescriptors, IdMap, Landlock, Namespaces,
+    ProcessOptions, ResourceLimits, RunMode, SandboxBuilder, SeccompSource,
+};
+pub use error::{BuildError, ChildStage, Error, Stage};
+pub use mount::{HidePid, MountEntry, ProcSubset, Table as MountTable};
+pub use sandbox::Sandbox;

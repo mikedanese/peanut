@@ -1,558 +1,264 @@
 # pnut Architecture
 
-A lightweight, config-driven Linux sandbox tool. Uses raw syscalls (no bwrap/nsjail dependency), TOML configuration, and supports Landlock filesystem access control. Runs entirely unprivileged via user namespaces.
+A lightweight, config-driven Linux sandbox tool. Uses raw syscalls, TOML configuration, and supports Landlock filesystem access control. Runs entirely unprivileged via user namespaces.
+
+## Crate Structure
+
+```
+pnut/           Library crate — planner/preparer. Validates config, compiles
+                seccomp, builds CString storage, and translates high-level
+                config types into pnut-child spec types.
+
+pnut-child/     #![no_std] child runtime — executor. Runs after clone3, uses
+                only raw syscalls, zero heap allocation. Consumes a borrowed
+                ChildSpec and applies all sandbox restrictions before execve.
+
+pnut-cli/       CLI binary — TOML config loading, argument parsing, invokes
+                pnut library.
+
+kafel/          Standalone seccomp-bpf policy compiler (Kafel DSL to BPF).
+```
 
 ## Run Modes
 
-- **STANDALONE_ONCE**: Executes a target program a single time and then exits. The parent process creates the sandbox, runs the child, waits for it to finish, and propagates the exit status. This is the default mode. The child calls `prctl(PR_SET_PDEATHSIG, SIGKILL)` so that if the parent dies unexpectedly, the kernel automatically kills all sandbox processes — preventing orphaned sandboxes from lingering.
+- **Once** (default): Parent creates the sandbox via `clone3`, child calls `pnut_child::run()`, parent supervises with pidfd + signalfd poll loop, forwards signals, propagates exit status.
 
-- **STANDALONE_EXECVE**: Executes a program directly without a supervising process. The calling process itself sets up the sandbox (namespaces, mounts, Landlock, seccomp) and then replaces itself with the target program via execve. No parent remains to wait or clean up. This is useful when pnut is invoked as a wrapper in a process tree where the caller manages the lifecycle (e.g., a systemd unit or container runtime).
+- **Execve**: Calling process `unshare`s namespaces, writes its own ID maps, calls `pnut_child::run()` in-process (no fork). The process replaces itself with the target command. Useful when invoked as a wrapper by a process manager.
 
 ## Key Isolation Techniques
 
-- **Linux namespaces** isolate system resources such as process IDs, network interfaces, and file system views. pnut uses `clone3` to create user, PID, mount, network, IPC, UTS, and cgroup namespaces in a single syscall.
+- **Linux namespaces** — `clone3` creates user, PID, mount, network, IPC, UTS, cgroup, and time namespaces in a single syscall. CLONE_PIDFD provides race-free process management.
 
-- **Seccomp-bpf policies** filter system calls, allowing only explicitly permitted actions by sandboxed processes. pnut compiles a Kafel-inspired policy DSL directly to BPF bytecode — no intermediate library. Policies support named arguments, `#define` constants, boolean expression trees, policy composition via `USE`, and `#include` for reusable policy files (including built-in policies compiled into the binary). Uses `prctl(PR_SET_NO_NEW_PRIVS, 1)` to enable unprivileged seccomp filter loading.
+- **Seccomp-bpf** — Kafel-inspired policy DSL compiled directly to BPF bytecode. Supports named arguments, `#define` constants, boolean expression trees, policy composition via `USE`, `#include` for reusable policies, and built-in stdlib policies.
 
-- **Filesystem isolation** controls access to the host filesystem, preventing unauthorized modifications. pnut constructs a new root filesystem from explicit mount entries, uses `pivot_root` to confine the process, and applies Landlock LSM rules for fine-grained path-based access control (read, write, execute).
+- **Filesystem isolation** — New mount API (`fsopen`/`fsconfig`/`fsmount`/`move_mount`/`open_tree`/`mount_setattr`) for fd-based mount construction. Eliminates TOCTOU races. Entire mount tree built fd-relative to the root tmpfs. `pivot_root(".", ".")` via fchdir for the final root switch.
 
-- **Network isolation** optionally creates a new network namespace, confining the sandbox to loopback-only connectivity. When the network namespace is not unshared (`namespaces.net = false`), the sandbox inherits the host's network stack and retains full connectivity — useful for sandboxes that need outbound access (e.g., `curl`, package managers) while still being isolated in other dimensions.
+- **Landlock** — LSM-based filesystem and network access control (ABI V1-V5). Applied in the child after mount setup.
 
-- **Resource limits** restrict per-process resource consumption. pnut lowers rlimits (soft limits, up to the hard limit ceiling) to constrain memory, open files, child processes, and file sizes.
+- **Network isolation** — Optional network namespace with automatic loopback bring-up.
 
-- **Linux capabilities management** restricts privileges available to processes within the sandbox, minimizing potential attack vectors. pnut drops all capabilities by default, keeping only those explicitly listed in the config.
+- **Resource limits** — rlimit enforcement (memory, open files, processes, CPU time, file sizes).
+
+- **Capabilities** — All dropped by default; explicit keep-list translated to raw capset bitmasks.
+
+## Module Layout
+
+### pnut (library)
+
+```
+pnut/src/
+  lib.rs              Re-exports
+  config.rs           All config types: SandboxBuilder, NamespaceConfig,
+                      CapsConfig, EnvConfig, FdConfig, RlimitConfig,
+                      LandlockConfig, IdMap, Command, ProcessOptions,
+                      RunMode, SeccompSource
+  mount.rs            MountEntry enum (Bind/Tmpfs/Proc/Mqueue/File), Table
+  error.rs            Error, BuildError, Stage (Clone/IdMap/Child)
+  seccomp.rs          Seccomp policy compilation (Kafel → BPF)
+  sandbox.rs          Sandbox, TryFrom<SandboxBuilder>, run()
+  sandbox/parent.rs   Once mode: clone3, ID maps, pidfd supervision,
+                      signal forwarding, ChildFailure decoding
+  sandbox/standalone.rs  Execve mode: unshare + in-process exec
+  sandbox/prepare.rs  Prepare trait + arena-based config → spec translation
+```
+
+### pnut-child (executor)
+
+```
+pnut-child/src/
+  lib.rs              #![no_std], public exports
+  spec.rs             ChildSpec, ExecSpec, MountPlan, EnvSpec, etc.
+  runtime.rs          run() — 19-stage execution sequence
+  report.rs           ChildFailure, Stage, Reporter
+  mount/mod.rs        Mount tree construction (new mount API)
+  mount/syscall.rs    Raw mount syscall wrappers
+  mount/dev.rs        /dev setup
+  env.rs              No-alloc environment assembly
+  fd.rs               Fd mapping and close policy
+  caps.rs             Capability dropping (raw capset)
+  landlock.rs         Landlock ruleset construction
+  seccomp.rs          Seccomp filter installation
+  rlimit.rs           Resource limit application
+  net.rs              Loopback bring-up
+  process.rs          prctl, execve, sethostname wrappers
+  io.rs               Raw read/write helpers
+  error.rs            Minimal Errno type
+```
+
+## Planner/Executor Split
+
+pnut is the planner — it owns config validation, type translation, and
+everything that requires heap allocation. pnut-child is the executor — it
+runs after fork using only raw syscalls.
+
+The data flows one way:
+
+```
+SandboxBuilder   (user-facing, String-based)
+    │ TryFrom
+    ▼
+Sandbox          (validated, seccomp compiled)
+    │ prepare(&arena)
+    ▼
+ChildSpec<'a>    (borrows from arena, passed to pnut_child::run)
+```
+
+Each config type implements the `Prepare` trait, which translates it into
+its corresponding pnut-child spec type, allocating all CStrings and slices
+into a `bumpalo::Bump` arena. The arena is created before `clone3` and
+COW'd into the child. Since pnut-child is `#![no_std]`, it never touches
+libc locks — safe even when forking from a multi-threaded process.
+
+## Sandbox Setup Sequence
+
+### Parent (once mode)
+
+```
+ 1. Validate config, compile seccomp → BPF
+ 2. Build PreparedChild + ChildView (all allocation happens here)
+ 3. Create sync pipe + status pipe (both CLOEXEC)
+ 4. Block SIGCHLD + forwarded signals
+ 5. clone3(CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNS | ... | CLONE_PIDFD)
+ 6. Write /proc/<child>/setgroups → "deny"
+ 7. Write /proc/<child>/uid_map
+ 8. Write /proc/<child>/gid_map
+ 9. Write byte to sync pipe (unblocks child)
+10. Poll on pidfd + signalfd:
+    - Signal received → forward to child via pidfd_send_signal
+    - pidfd readable → child exited, collect status via waitpid
+11. Read status pipe → decode ChildFailure (if any)
+12. Return exit code or Error::ChildSetup
+```
+
+### Child (pnut_child::run)
+
+```
+ 1. PR_SET_PDEATHSIG(SIGKILL)           — die if parent dies
+ 2. Verify parent still alive            — race check
+ 3. Read sync pipe                       — wait for ID maps
+ 4. PR_SET_DUMPABLE                      — prevent ptrace
+ 5. Mount setup:
+    a. mount_setattr("/", AT_RECURSIVE, MS_PRIVATE)
+    b. fsopen("tmpfs") → fsmount → move_mount (root)
+    c. Process mount entries (bind/tmpfs/proc/mqueue/file) fd-relative
+    d. Setup /dev (tmpfs + device bind mounts + devpts + symlinks)
+    e. fchdir(root_fd) + pivot_root(".", ".") + umount2(".", MNT_DETACH)
+ 6. sethostname                          — requires UTS namespace
+ 7. Bring up loopback                    — requires NET namespace
+ 8. setrlimit for each resource
+ 9. Landlock: create_ruleset → add_rule (path/net) → restrict_self
+10. Assemble envp from scratch buffers   — no-alloc
+11. capset: drop all except keep-list
+12. setsid                               — disconnect from terminal
+13. Apply fd actions (dup2) + close_other_fds (close_range)
+14. PR_SET_TSC (x86 only)
+15. PR_SET_NO_NEW_PRIVS                  — required for seccomp
+16. PR_SET_MDWE                          — W^X enforcement
+17. seccomp(SECCOMP_SET_MODE_FILTER)     — MUST BE LAST
+18. chdir(cwd)
+19. execve(path, argv, envp)
+20. On failure: write ChildFailure to status_fd, _exit(126/127)
+```
+
+## Error Propagation
+
+- **Parent-side errors** (clone3 fails, ID map write fails): returned as `Error::Setup { stage: Stage::Clone/IdMap }`.
+- **Child-side errors**: child writes a 16-byte `ChildFailure` to the status pipe. Parent decodes it into `Error::ChildSetup { stage, errno, detail, message }`. Library users get programmatic access to the failing stage.
+- **Successful exec**: status pipe write end closes via CLOEXEC, parent reads 0 bytes.
+- **Exit codes**: 127 = command not found (ENOENT), 126 = setup/permission failure, 128+N = signal death.
 
 ## Unprivileged by Design
 
-pnut runs entirely without root, without setuid, without any special capabilities. The only kernel requirement is `kernel.unprivileged_userns_clone = 1` (the default on most modern distros).
+pnut runs entirely without root, setuid, or special capabilities. The only kernel requirement is `kernel.unprivileged_userns_clone = 1`.
 
 | Feature | Mechanism |
 |---------|-----------|
 | User namespace | `clone3(CLONE_NEWUSER)` |
 | PID namespace | `clone3(CLONE_NEWPID)` inside user namespace |
 | Mount namespace | `clone3(CLONE_NEWNS)` inside user namespace |
-| UTS namespace | `clone3(CLONE_NEWUTS)` inside user namespace |
-| IPC namespace | `clone3(CLONE_NEWIPC)` inside user namespace |
-| Network namespace | `clone3(CLONE_NEWNET)` inside user namespace |
-| Cgroup namespace | `clone3(CLONE_NEWCGROUP)` inside user namespace |
-| Bind mounts (ro/rw) | `mount(MS_BIND)` in owned mount namespace |
-| tmpfs mounts | `mount("tmpfs")` in owned mount namespace |
-| proc mount | `mount("proc")` in owned mount namespace |
-| Overlayfs | `mount("overlay")` in user namespace (kernel >= 5.11) |
-| pivot_root | Works in owned mount namespace |
-| /dev setup | Bind-mount individual device nodes from host |
-| File content injection | Write to tmpfs, bind-mount into place |
-| Symlinks | `symlink()` in new root |
+| Bind mounts | `open_tree(OPEN_TREE_CLONE)` + `move_mount` |
+| tmpfs/proc/mqueue | `fsopen` → `fsconfig` → `fsmount` → `move_mount` |
+| Read-only mounts | `mount_setattr(MOUNT_ATTR_RDONLY)` — atomic, no remount |
+| pivot_root | `fchdir(root_fd)` + `pivot_root(".", ".")` |
+| /dev setup | Bind-mount device nodes from host, devpts newinstance |
+| File injection | Write to tmpfs, `open_tree(OPEN_TREE_CLONE)` + `move_mount` |
 | Loopback bring-up | `ioctl(SIOCSIFFLAGS)` in owned network namespace |
 | UID/GID mapping | Parent writes `/proc/<child>/{uid_map,gid_map}` |
 | Hostname | `sethostname()` in owned UTS namespace |
 | Seccomp-bpf | `prctl(PR_SET_NO_NEW_PRIVS)` then `seccomp()` |
 | Landlock | `landlock_create_ruleset()` / `landlock_restrict_self()` |
-| Capability dropping | `prctl(PR_SET_KEEPCAPS)` / capset in user namespace |
-| rlimits (lowering) | `setrlimit()` — can lower soft, raise soft up to hard |
-| Environment control | `clearenv()` / `setenv()` / `unsetenv()` |
-| PR_SET_PDEATHSIG | `prctl()` — always available |
-| New session (setsid) | `setsid()` — always available |
-| mqueue mount | `mount("mqueue")` in owned mount namespace |
-
-### Deferred (Requires Privileges)
-
-The following features are out of scope for v0.1. They require real root or specific capabilities and will be considered in a future privileged mode:
-
-- **Cgroup v2 resource limits** — creating cgroup directories and writing controller files (memory.max, pids.max, cpu.max) requires ownership of the cgroup subtree
-- **Raising rlimits above hard limit** — requires `CAP_SYS_RESOURCE`
-- **devtmpfs mount** — requires `CAP_SYS_ADMIN` in init user namespace (pnut uses device bind-mounts instead)
-- **disable_userns** — writing `user.max_user_namespaces` sysctl requires `CAP_SYS_ADMIN`
-- **Network beyond loopback** — veth pairs, iptables/nftables, bridge setup require `CAP_NET_ADMIN`
-- **Time namespace** — `CLONE_NEWTIME` requires real capabilities
-
-## Usage
-
-```
-pnut --config sandbox.toml -- ls /
-```
-
-## Module Layout
-
-```
-src/
-  main.rs        -- CLI (clap), config loading, invoke sandbox::run()
-  config.rs      -- Serde structs for TOML config, defaults, validation
-  sandbox.rs     -- Orchestrator: clone3, pipe sync, parent/child flow, waitpid
-  namespace.rs   -- clone3 wrapper, clone flag construction
-  idmap.rs       -- Write /proc/PID/{uid_map,gid_map,setgroups}
-  mount.rs       -- Bind mounts, tmpfs, proc, dev, overlayfs, pivot_root
-  landlock.rs    -- Landlock ruleset construction and enforcement
-  seccomp/       -- Seccomp policy compiler (parser, resolver, codegen, built-in policies)
-  rlimit.rs      -- setrlimit calls
-  caps.rs        -- Capability bounding set drop/keep
-  net.rs         -- Loopback bring-up via ioctl
-  env.rs         -- Environment clear/set/keep
-```
-
-Single binary. Flat module structure. Each module is one file, one concern.
+| Capability dropping | `capset` with precomputed bitmasks |
+| rlimits | `setrlimit()` — can lower soft, raise up to hard |
+| Environment | No-alloc assembly from scratch buffers in child |
+| Process supervision | pidfd + signalfd poll loop, `pidfd_send_signal` |
 
 ## Config Format
 
-TOML. Full example:
+TOML. Mount entries are a tagged enum:
 
 ```toml
-[sandbox]
-hostname = "POPCORN"
-cwd = "/"
-mode = "once"                   # "once" (default) or "execve"
-new_session = true              # setsid() — prevents terminal injection (CVE-2017-5226)
-die_with_parent = true          # SIGKILL child if parent dies
-
-[namespaces]
-user = true                     # always needed for unprivileged sandboxing
-pid = true
-mount = true
-uts = true
-ipc = true
-net = false                     # false = inherit host network (like unshare -U -p --fork)
-cgroup = false
-
 [[mount]]
+type = "bind"
 src = "/usr"
 dst = "/usr"
-bind = true
-read_only = true
-
-[[mount]]
-src = "/lib"
-dst = "/lib"
-bind = true
 read_only = true
 
 [[mount]]
 type = "tmpfs"
 dst = "/tmp"
-size = 10485760                 # 10 MiB
-perms = "0700"
+size = 10485760
 
 [[mount]]
 type = "proc"
 dst = "/proc"
 
 [[mount]]
-type = "mqueue"
-dst = "/dev/mqueue"
-
-[[mount]]
-dst = "/etc/resolv.conf"
-content = "nameserver 8.8.8.8\nnameserver 1.1.1.1\n"
-
-[[mount]]
+type = "file"
 dst = "/etc/hostname"
-content = "POPCORN\n"
+content = "sandbox\n"
 read_only = true
-
-[landlock]
-allowed_read = ["/usr", "/lib"]
-allowed_write = ["/tmp"]
-allowed_execute = ["/usr/bin"]
-
-# Seccomp policy: inline DSL string or path to .policy file (mutually exclusive)
-seccomp_policy = """
-#include "stdio.policy"
-#include "malloc.policy"
-
-POLICY app {
-  KILL { ptrace, syslog, process_vm_readv, process_vm_writev }
-}
-
-USE stdio, malloc, app DEFAULT KILL
-"""
-# seccomp_policy_file = "/etc/pnut/myapp.policy"
-
-[rlimits]
-nofile = 256
-nproc = 512
-fsize_mb = 1
-stack_mb = 8
-
-[uid_map]
-inside = 0
-outside = 1000
-count = 1
-
-[gid_map]
-inside = 0
-outside = 1000
-count = 1
-
-[capabilities]
-keep = ["CAP_NET_BIND_SERVICE"]
-
-[env]
-clear = true
-set = { PATH = "/usr/bin:/bin", HOME = "/" }
-keep = ["TERM"]
-
-[run]
-path = "/bin/sh"
-args = ["-i"]
-argv0 = "sh"                   # optional: override argv[0]
 ```
-
-## Sandbox Setup Sequence
-
-The ordering is constrained by Linux kernel rules about which operations require which privileges and namespaces.
-
-### Parent Process
-
-```
- 1. Parse config, validate
- 2. Create two pipe pairs:
-    - sync_pipe  (parent writes, child reads)
-    - ready_pipe (child writes, parent reads)
- 3. clone3(CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNS | ...)
- 4. Write /proc/<child>/setgroups -> "deny"
- 5. Write /proc/<child>/uid_map
- 6. Write /proc/<child>/gid_map
- 7. Write byte to sync_pipe   (unblocks child)
- 8. Read from ready_pipe      (blocks until child is ready)
- 9. If json_status_fd: write {"child-pid": <pid>} to status fd
-10. waitpid -> propagate exit status
-11. If json_status_fd: write {"exit-code": <code>} to status fd
-```
-
-### Child Process (after sync_pipe unblocks)
-
-```
- 1. prctl(PR_SET_PDEATHSIG, SIGKILL)         -- die if parent dies
- 2. mount("", "/", "", MS_REC|MS_PRIVATE)     -- make mount tree private
- 3. Mount tmpfs as new root
- 4. Process mount table: bind mounts, tmpfs, proc, dev nodes, content files
- 5. Create /dev with minimal devices (null, zero, urandom, random, tty)
- 6. Create symlinks: /dev/fd -> /proc/self/fd, /dev/stdin, /dev/stdout, /dev/stderr
- 7. pivot_root(new_root, put_old)
- 8. umount2(put_old, MNT_DETACH)
- 9. chdir(cwd)
-10. sethostname                               -- requires UTS namespace
-11. If net namespace: bring up loopback        -- requires NET namespace
-12. Set rlimits
-13. Apply Landlock restrictions
-14. Set environment variables (clearenv, setenv, keep)
-15. Drop capabilities
-16. If new_session: setsid()                  -- disconnect from terminal
-17. prctl(PR_SET_NO_NEW_PRIVS, 1)            -- required for unprivileged seccomp
-18. Load seccomp filter                       -- MUST BE LAST before execve
-19. Write byte to ready_pipe                  -- signal parent
-20. execve(command)
-```
-
-### Why This Order
-
-- **clone3 with all flags at once**: Single syscall. CLONE_NEWUSER grants capabilities in the new user namespace so mount/pivot_root work without real root.
-- **PR_SET_PDEATHSIG first in child**: Must be set before any blocking operations to avoid a race where the parent dies before the child sets it.
-- **UID/GID maps written by parent**: The child cannot reliably write its own maps. Parent writes setgroups deny, then uid_map, then gid_map. Standard pattern that avoids races.
-- **Mounts first in child**: Everything else happens inside the new filesystem view.
-- **Content files during mount phase**: Files with inline content (like `/etc/resolv.conf`) are written to tmpfs and bind-mounted into place, same as nsjail's `src_content`.
-- **pivot_root before anything sensitive**: Child only sees the intended filesystem.
-- **Landlock after mounts**: Landlock restricts future filesystem access; must apply after all mounts are established.
-- **setsid before seccomp**: setsid() is a syscall that seccomp might block.
-- **PR_SET_NO_NEW_PRIVS before seccomp**: Required by kernel for unprivileged seccomp filter loading.
-- **Seccomp absolutely last**: Once installed, it constrains the execve syscall itself. Any setup syscalls needed after seccomp would fail.
-
-### Error Propagation
-
-- **Child fails during setup**: Writes error to stderr, exits with code 126 ("command cannot run"). Parent detects via waitpid.
-- **Parent fails** (e.g., writing UID maps): Closes sync_pipe without writing. Child gets EOF, exits. Parent returns the error.
-- **Exit status**: Parent exits with child's exit code. If child killed by signal: 128 + signal_number (shell convention).
-
-## clone3 Wrapper
-
-`nix` does not expose `clone3`, so we use a thin unsafe wrapper:
-
-```rust
-#[repr(C)]
-struct CloneArgs {
-    flags: u64,
-    pidfd: u64,
-    child_tid: u64,
-    parent_tid: u64,
-    exit_signal: u64,
-    stack: u64,
-    stack_size: u64,
-    tls: u64,
-}
-
-unsafe fn clone3(flags: u64) -> Result<Pid> {
-    let mut args = CloneArgs {
-        flags,
-        exit_signal: libc::SIGCHLD as u64,
-        ..std::mem::zeroed()
-    };
-    let ret = libc::syscall(
-        libc::SYS_clone3,
-        &mut args as *mut CloneArgs,
-        std::mem::size_of::<CloneArgs>(),
-    );
-    match ret {
-        -1 => Err(io::Error::last_os_error()),
-        0 => Ok(Pid::from_raw(0)),   // child
-        pid => Ok(Pid::from_raw(pid as i32)),  // parent
-    }
-}
-```
-
-This gives us all namespace flags in one syscall and makes the child PID 1 in the new PID namespace. Using fork+unshare(CLONE_NEWPID) would NOT make the caller PID 1 -- only its children would be.
-
-## /dev Setup
-
-Bind-mount specific devices from the host rather than mounting devtmpfs (which requires real CAP_SYS_ADMIN).
-
-### Implementation Sequence
-
-1. **Mount a fresh tmpfs at `/dev`**: Ensures the sandbox doesn't see the host's full device list.
-2. **Create placeholder files and directories**: Empty files for character devices, directories for `pts` and `shm`, to serve as bind mount targets inside the tmpfs.
-3. **Bind mount each device**: `mount(source, target, NULL, MS_BIND, NULL)` for each device node.
-4. **Remount read-only (optional)**: For devices that shouldn't be writable, remount with `MS_BIND | MS_REMOUNT | MS_RDONLY`.
-
-### Standard Device Set
-
-```
-/dev/null     -> bind from host /dev/null
-/dev/zero     -> bind from host /dev/zero
-/dev/full     -> bind from host /dev/full
-/dev/random   -> bind from host /dev/random
-/dev/urandom  -> bind from host /dev/urandom
-/dev/tty      -> bind from host /dev/tty (if the app needs a controlling terminal)
-/dev/fd       -> symlink to /proc/self/fd
-/dev/stdin    -> symlink to /proc/self/fd/0
-/dev/stdout   -> symlink to /proc/self/fd/1
-/dev/stderr   -> symlink to /proc/self/fd/2
-```
-
-### /dev/pts
-
-Don't bind mount the host's `/dev/pts/` nodes individually. Instead, mount a new instance of devpts with the `newinstance` option:
-
-```
-mount -t devpts devpts /sandbox/dev/pts -o newinstance,ptmxmode=0666,mode=620
-```
-
-devpts is one of the few filesystems that is user-namespace aware and provides true isolation for terminal sessions.
-
-### Mount Propagation
-
-Bind mounts require a mount namespace (`CLONE_NEWNS`), which pnut already creates. The sandbox's mount namespace must be set to `MS_PRIVATE` (or `MS_SLAVE`) so that `/dev` mounts don't leak back to the host or other namespaces. pnut does this early in the child setup: `mount("", "/", "", MS_REC|MS_PRIVATE, NULL)`.
-
-## File Content Injection
-
-Mount entries with a `content` field inject inline data into the sandbox filesystem. The content is written to a temporary file on a tmpfs, then bind-mounted (optionally read-only) at the destination path. This is useful for synthetic files like `/etc/resolv.conf`, `/etc/hostname`, or `/etc/passwd` that need sandbox-specific content without a host-side file.
-
-## Terminal Security
-
-By default, pnut calls `setsid()` in the child to create a new terminal session, disconnecting from the controlling terminal. Without this, the sandboxed process can inject keystrokes into the parent terminal via the `TIOCSTI` ioctl (CVE-2017-5226). This can be disabled in config if the sandbox needs terminal access (e.g., interactive shells), in which case a seccomp rule blocking TIOCSTI is recommended.
-
-## Status Reporting
-
-For programmatic consumers, pnut supports writing JSON status to a file descriptor (`--json-status-fd`). The parent writes:
-1. `{"child-pid": <pid>}` after the child is set up and ready
-2. `{"exit-code": <code>}` after the child exits
-
-This enables orchestrators to track sandbox lifecycle without parsing stderr.
-
-## Seccomp Policy Design
-
-pnut compiles a Kafel-inspired policy DSL directly to BPF bytecode. The compiler is self-contained: policy text in, `sock_fprog` out. No dependency on seccompiler, libseccomp, or any external BPF generation library.
-
-### Compilation Pipeline
-
-```
-Policy text → Parse (pest) → AST → Resolve → Range Optimize → BPF Codegen
-```
-
-1. **Parse**: pest grammar tokenizes and builds the AST. Handles `#include` directives during parsing (with search paths and depth limiting).
-2. **Resolve**: `#define` constants are substituted, syscall names are mapped to numbers (architecture-specific table), declared argument names are mapped to arg0–arg5 indices, `USE` references are flattened (with cycle detection).
-3. **Range optimize**: Syscalls with the same unconditional action are sorted by number and merged into contiguous ranges. This is the key optimization from Kafel's `range_rules.c` — instead of one `BPF_JEQ` per syscall (O(n) like sandboxed-api), ranges are checked with `BPF_JGE` in a binary decision tree (O(log n) comparisons).
-4. **BPF codegen**: Emit raw `sock_filter` instructions. Architecture check first (`seccomp_data.arch == AUDIT_ARCH_X86_64`, KILL_PROCESS on mismatch). Then the syscall decision tree over ranges. Conditional rules (argument filtering) generate expression evaluation code with 64-bit high/low word splitting for arguments wider than 32 bits. Jump offsets are resolved in a fixup pass; distances > 255 use intermediate trampolines (BPF conditional jumps have 8-bit offsets).
-
-### Policy Language
-
-Kafel-inspired DSL with C-like syntax:
-
-```
-#include "dynamic.policy"
-
-#define STDOUT 1
-#define STDERR 2
-
-POLICY stdio {
-  ALLOW {
-    read,
-    write(fd, buf, count) { fd == STDOUT || fd == STDERR },
-    close, dup, dup2, lseek, fstat
-  }
-}
-
-POLICY basic {
-  ALLOW { brk, mmap, munmap, mprotect, exit_group }
-  KILL { ptrace, process_vm_readv, process_vm_writev }
-}
-
-USE stdio, basic DEFAULT KILL
-```
-
-**Key constructs:**
-- `POLICY name { ... }` — named, composable policy blocks
-- `USE p1, p2 DEFAULT action` — top-level composition with default action
-- `#define NAME value` — compile-time constants
-- `#include "file.policy"` — file inclusion with search paths and max depth (10)
-- `syscall(arg1, arg2) { expr }` — argument filtering with named parameters
-- Boolean expressions: `&&`, `||`, `!`, comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`), masked comparison `(arg & mask) == val`
-- Actions: `ALLOW`, `KILL`, `KILL_PROCESS`, `LOG`, `ERRNO(n)`, `TRAP(n)`, `TRACE(n)`
-
-### Built-in Policies
-
-The kafel crate now bakes a single seccomp stdlib file into the binary via
-`include_str!()`: `kafel/src/prelude.policy`. It is exposed as
-`kafel::BUILTIN_PRELUDE`, and pnut passes that prelude automatically when it
-validates or compiles `seccomp_policy_file` policies.
-
-The stdlib mirrors the seccomp-expressible subset of Sandboxed API's
-`PolicyBuilder` helpers. Instead of four coarse convenience groups, it exposes a
-broader family of composable `allow_*` policies such as:
-
-- `allow_default_policy` — seccomp-only mirror of `Sandbox2Config::DefaultPolicyBuilder()`
-- `allow_static_startup` / `allow_dynamic_startup` — glibc/runtime startup helpers
-- `allow_system_malloc`, `allow_scudo_malloc`, `allow_tcmalloc` — allocator-specific memory helpers
-- `allow_safe_fcntl`, `allow_tcgets`, `allow_getrlimit` — argument-filtered syscall helpers
-
-**Usage** (in a kafel policy or pnut's `seccomp_policy_file`):
-
-```
-USE allow_default_policy DEFAULT KILL
-```
-
-User-defined policy files can reference these built-ins directly and layer extra
-rules on top:
-
-```
-POLICY custom {
-    USE allow_default_policy
-    ALLOW { custom_syscall }
-}
-USE custom DEFAULT KILL
-```
-
-### Range Optimization
-
-The key insight from Kafel: most policies allow or deny large groups of syscalls. Checking each syscall individually wastes BPF instructions. Instead:
-
-1. Sort all unconditional rules by syscall number
-2. Merge adjacent syscalls with the same action into ranges (e.g., syscalls 0–15 → ALLOW)
-3. Build a balanced binary decision tree over the ranges using `BPF_JGE` (jump-if-greater-or-equal)
-4. Conditional rules (with argument filters) are kept separate and checked individually after the range tree
-
-For a policy allowing 50 consecutive syscalls, this produces ~6 comparisons (log2(50)) instead of 50. The BPF program is smaller and the kernel evaluates it faster.
-
-### Actions
-
-- `ALLOW` — SECCOMP_RET_ALLOW
-- `KILL` — SECCOMP_RET_KILL_THREAD
-- `KILL_PROCESS` — SECCOMP_RET_KILL_PROCESS
-- `ERRNO(n)` — SECCOMP_RET_ERRNO with specified errno value
-- `LOG` — SECCOMP_RET_LOG (log and allow)
-- `TRAP(n)` — SECCOMP_RET_TRAP (send SIGSYS with data)
-- `TRACE(n)` — SECCOMP_RET_TRACE (ptrace notification)
-
-## Structured Exit Reporting
-
-For the JSON status fd (`--json-status-fd`), pnut reports structured exit information beyond simple exit codes:
-
-```json
-{"child-pid": 12345}
-{"exit-code": 0, "reason": "exited"}
-```
-
-When the sandbox terminates abnormally:
-```json
-{"exit-code": 159, "reason": "signaled", "signal": "SIGSYS"}
-{"exit-code": 126, "reason": "setup-error", "detail": "mount failed: /nonexistent: No such file or directory"}
-```
-
-This enables orchestrators to distinguish between: normal exit, signal death, seccomp violation (SIGSYS from seccomp TRAP/KILL), setup failure, and command-not-found. Inspired by Sandboxed API's fine-grained `Result::StatusEnum`.
-
-## Network Namespace
-
-Two modes of network access:
-
-1. **Inherit host network** (`namespaces.net = false`, the default): The sandbox shares the host's network namespace. Full connectivity — DNS, outbound TCP/UDP, everything works. Equivalent to `unshare -U -p --fork -- curl google.com`. No setup required.
-
-2. **Loopback only** (`namespaces.net = true`): A new network namespace is created. Only the loopback interface exists. pnut brings it up automatically:
-   ```rust
-   let sock = socket(AF_INET, SOCK_DGRAM, 0);
-   // ioctl(sock, SIOCGIFFLAGS, &ifr)  -- get current flags
-   // ifr.ifr_flags |= IFF_UP
-   // ioctl(sock, SIOCSIFFLAGS, &ifr)  -- set flags
-   ```
-   No external network access. Useful for pure computation sandboxes.
 
 ## Dependencies
 
-```toml
-[dependencies]
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-nix = { version = "0.31", features = ["mount", "sched", "signal", "user", "process", "hostname", "resource", "net"] }
-landlock = "0.4"
-caps = "0.5"
-libc = "0.2"
-pest = "2.8"
-pest_derive = "2.8"
-```
+### pnut (library)
+| Crate | Purpose |
+|-------|---------|
+| pnut-child | Child runtime executor |
+| kafel | Seccomp policy compilation |
+| nix | Signal handling, pipe, poll, pid types |
+| libc | clone3 syscall, seccomp constants |
+| landlock | Landlock access mask constants (AccessFs, AccessNet) |
+| caps | Capability enum type |
+| thiserror | Error derive |
 
-| Crate | Rationale |
-|-------|-----------|
-| nix | Safe wrappers for mount, pivot_root, prctl, setrlimit, unshare, sethostname, etc. Avoids raw libc FFI for most syscalls. |
-| landlock | Kernel Landlock ABI abstraction. Handles ABI version negotiation. |
-| pest / pest_derive | Parser generator for the seccomp policy DSL. Generates a PEG parser from the grammar file. |
-| caps | Linux capability manipulation. |
-| libc | Needed for SYS_clone3, seccomp(), and ioctl constants not in nix. Also provides syscall number constants for the seccomp compiler's syscall table. |
-| anyhow | Error propagation with context. Appropriate for a CLI tool. |
+### pnut-child (executor)
+| Crate | Purpose |
+|-------|---------|
+| libc | Raw syscall wrappers |
+
+### pnut-cli (binary)
+| Crate | Purpose |
+|-------|---------|
+| clap | CLI argument parsing |
+| serde/toml | TOML config deserialization |
+| anyhow | CLI error handling |
 
 ## Kernel Requirements
 
-- Linux >= 5.11 (clone3, Landlock ABI v1, overlayfs in user namespace)
+- Linux >= 5.2 (clone3, new mount API, CLONE_PIDFD)
 - Unprivileged user namespaces enabled (`kernel.unprivileged_userns_clone = 1`)
 
-## Implementation Phases
+## Seccomp Policy
 
-### Phase 1: Sandbox Core (complete)
-- CLI parsing (clap), TOML config loading, config validation
-- clone3 wrapper, pipe sync, UID/GID map writing
-- Mount namespace: bind mounts, tmpfs, proc, /dev, content injection, pivot_root
-- UTS (hostname), environment control, setsid, argv0 override
-- STANDALONE_ONCE and STANDALONE_EXECVE modes
-- die_with_parent, exit code propagation (126/127/128+signal)
+Kafel-inspired DSL compiled directly to BPF bytecode. Range optimization merges adjacent syscalls with the same action into contiguous ranges checked with a balanced binary tree (O(log n) comparisons instead of O(n)).
 
-### Phase 2: Security Hardening
-- Landlock filesystem access control (read/write/execute restrictions)
-- Seccomp-bpf: kafel-style policy compiler with direct BPF codegen, built-in policies, range optimization
-- Rlimits (lowering only, unprivileged)
-- Capability dropping
-- Network namespace loopback bring-up
-- Structured exit reporting via JSON status fd
-- Refactor sandbox.rs duplication (evaluator concern from Phase 1)
+```
+POLICY app {
+  ALLOW { read, write, close, mmap, munmap, exit_group }
+  KILL  { ptrace, process_vm_readv }
+}
+USE app DEFAULT KILL
+```
 
-## Future Work
-
-Features to explore after Phase 2, informed by Sandboxed API, nsjail, and bwrap:
-
-- **Seccomp SECCOMP_RET_USER_NOTIF** — userspace syscall interception (kernel 5.0+). Allows a supervisor to intercept and respond to syscalls without ptrace. Lower overhead, useful for policy-as-code scenarios. Sandboxed API uses this as an alternative to ptrace monitoring.
-- **Network proxy / allowed hosts** — fine-grained per-connection network filtering, as in Sandboxed API's `AllowedHosts` + `NetworkProxyServer`. Goes beyond the binary net-namespace-on/off model.
-- **Fork server** — persistent child process that handles fork requests, avoiding repeated namespace/mount initialization overhead. Useful for repeated sandbox invocations (batch processing, server mode). Used by Sandboxed API for efficiency.
-- **Notification hooks** — emit structured events (syscall violations, lifecycle changes) to the status fd, allowing external monitoring without modifying core code. Inspired by Sandboxed API's `Notify` base class.
-- **Overlayfs mounts** — writable overlay on top of read-only bind mounts.
-- **mqueue mounts** — POSIX message queue support.
-- **Cgroup v2 resource limits** (privileged) — memory, PID, CPU limits via cgroup hierarchy.
-- **disable_userns** (privileged) — prevent nested user namespace creation.
-- **Time namespace** (privileged) — `CLONE_NEWTIME` for clock isolation.
-- **Shared memory buffer** — `memfd_create` for efficient large data exchange between host and sandboxee.
-- **Additional built-in policies** — expand the set of compiled-in policy files as real-world usage patterns emerge (e.g., `gpu.policy`, `audio.policy`, `x11.policy`).
+Built-in stdlib policies (`allow_default_policy`, `allow_static_startup`, etc.) are compiled into the binary via `include_str!`.

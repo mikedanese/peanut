@@ -98,6 +98,7 @@ config, or the man pages (`pnut(1)` and `pnut.toml(5)`) for full documentation.
 | Crate | Description |
 |-------|-------------|
 | [`pnut`](https://crates.io/crates/pnut) | Library for building and running sandboxes programmatically |
+| [`pnut-child`](https://crates.io/crates/pnut-child) | `#![no_std]` child runtime — runs after fork, raw syscalls only |
 | [`pnut-cli`](https://crates.io/crates/pnut-cli) | CLI binary (`pnut`) driven by TOML config files |
 | [`kafel`](https://crates.io/crates/kafel) | Standalone seccomp-bpf policy compiler (Kafel DSL to BPF) |
 

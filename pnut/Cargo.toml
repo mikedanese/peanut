@@ -16,8 +16,10 @@ path = "src/lib.rs"
 
 [dependencies]
 kafel = { workspace = true }
+pnut-child = { path = "../pnut-child" }
 thiserror = { workspace = true }
 nix = { workspace = true }
 libc = { workspace = true }
 landlock = "0.4.4"
 caps = "0.5.6"
+bumpalo = "3.20.2"

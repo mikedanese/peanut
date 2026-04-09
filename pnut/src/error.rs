@@ -2,19 +2,18 @@
 
 use std::fmt;
 
+/// Re-export pnut-child's Stage for child failure decoding.
+pub use pnut_child::Stage as ChildStage;
+
 /// Which phase of sandbox setup failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
+    /// clone3 or unshare syscall failed (parent-side).
     Clone,
+    /// UID/GID map writing failed (parent-side).
     IdMap,
-    Mount,
-    Pivot,
-    Network,
-    Rlimit,
-    Landlock,
-    Capabilities,
-    Fd,
-    Exec,
+    /// The child process reported a failure via the status pipe.
+    Child(ChildStage),
 }
 
 impl fmt::Display for Stage {
@@ -22,14 +21,7 @@ impl fmt::Display for Stage {
         match self {
             Stage::Clone => write!(f, "clone"),
             Stage::IdMap => write!(f, "idmap"),
-            Stage::Mount => write!(f, "mount"),
-            Stage::Pivot => write!(f, "pivot"),
-            Stage::Network => write!(f, "network"),
-            Stage::Rlimit => write!(f, "rlimit"),
-            Stage::Landlock => write!(f, "landlock"),
-            Stage::Capabilities => write!(f, "capabilities"),
-            Stage::Fd => write!(f, "fd"),
-            Stage::Exec => write!(f, "exec"),
+            Stage::Child(s) => write!(f, "child:{s:?}"),
         }
     }
 }
@@ -43,6 +35,17 @@ pub enum Error {
         stage: Stage,
         context: String,
         source: std::io::Error,
+    },
+
+    /// The child process failed during sandbox setup.
+    /// Contains the decoded failure from the status pipe.
+    #[error("child setup failed at {stage:?}: {message}")]
+    ChildSetup {
+        stage: ChildStage,
+        errno: i32,
+        detail: i32,
+        exit_code: i32,
+        message: String,
     },
 
     /// A logical error with no underlying OS error.

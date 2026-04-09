@@ -2,13 +2,12 @@
 
 use std::path::Path;
 
+use crate::config::{Namespaces, SeccompSource};
 use crate::error::BuildError;
-use crate::namespace;
-use crate::sandbox::SeccompSource;
 
 pub(crate) fn prepare_program(
     source: Option<&SeccompSource>,
-    ns_config: &namespace::Config,
+    ns_config: &Namespaces,
 ) -> std::result::Result<Option<kafel::BpfProgram>, BuildError> {
     let need_userns_block = !ns_config.allow_nested_userns;
 
@@ -65,11 +64,11 @@ fn compile_policy(
     let mut policy = kafel::parse_policy(policy_text, &options)
         .map_err(|e| BuildError::SeccompCompile(e.to_string()))?;
 
-    // pnut installs the seccomp filter before execve, so execve must always
-    // be allowed. Runtime startup syscalls (set_tid_address, mprotect, etc.)
-    // are the user's responsibility via allow_static_startup or
-    // allow_dynamic_startup in the policy.
-    for name in ["execve", "execveat"] {
+    // pnut installs the seccomp filter before execve and chdir, so these
+    // must always be allowed. Runtime startup syscalls (set_tid_address,
+    // mprotect, etc.) are the user's responsibility via allow_static_startup
+    // or allow_dynamic_startup in the policy.
+    for name in ["execve", "execveat", "chdir"] {
         let nr =
             kafel::resolve_syscall(name).map_err(|e| BuildError::SeccompCompile(e.to_string()))?;
         policy.add_entry(kafel::PolicyEntry {

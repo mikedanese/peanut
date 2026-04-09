@@ -87,7 +87,7 @@ dst = "/proc"
     )
 }
 
-// --- Invariant 3: deny_unknown_fields preserved on LandlockConfig ---
+// --- Invariant 3: deny_unknown_fields preserved on Landlock ---
 
 /// New V2+ field names are exact; typos or wrong names are rejected.
 #[test]

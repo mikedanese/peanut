@@ -424,13 +424,14 @@ fn adversarial_seccomp_preset_stdio() {
     // Write the kafel policy file
     let policy_path = dir.path().join("policy.policy");
     // allow_default_policy covers startup + common I/O. prctl is added
-    // because busybox calls PR_GET_NAME during init.
+    // because busybox calls PR_GET_NAME during init. setuid/setgid are
+    // needed because busybox reads /etc/busybox.conf and re-sets its uid/gid.
     std::fs::write(
         &policy_path,
         r#"
 POLICY test {
     USE allow_default_policy
-    ALLOW { prctl }
+    ALLOW { prctl, setuid, setgid }
 }
 USE test DEFAULT KILL
 "#,

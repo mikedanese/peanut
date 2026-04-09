@@ -29,7 +29,7 @@ struct SandboxConfig {
     #[serde(default)]
     sandbox: SettingsConfig,
     #[serde(default)]
-    namespaces: NamespaceConfig,
+    namespaces: Namespaces,
     #[serde(default)]
     mount: Vec<MountEntryConfig>,
     #[serde(default)]
@@ -37,11 +37,11 @@ struct SandboxConfig {
     #[serde(default)]
     gid_map: Option<IdMapConfig>,
     #[serde(default)]
-    env: Option<EnvConfig>,
+    env: Option<Environment>,
     #[serde(default)]
     rlimits: Option<RlimitsConfig>,
     #[serde(default)]
-    landlock: Option<LandlockConfig>,
+    landlock: Option<Landlock>,
     #[serde(default)]
     capabilities: Option<CapabilitiesConfig>,
     #[serde(default)]
@@ -120,7 +120,7 @@ impl From<RunModeConfig> for RunMode {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NamespaceConfig {
+struct Namespaces {
     #[serde(default = "default_true")]
     user: bool,
     #[serde(default = "default_true")]
@@ -141,7 +141,7 @@ struct NamespaceConfig {
     allow_nested_userns: bool,
 }
 
-impl Default for NamespaceConfig {
+impl Default for Namespaces {
     fn default() -> Self {
         Self {
             user: true,
@@ -163,7 +163,7 @@ enum ProcSubsetConfig {
     Pid,
 }
 
-impl From<ProcSubsetConfig> for pnut::mount::ProcSubset {
+impl From<ProcSubsetConfig> for pnut::ProcSubset {
     fn from(c: ProcSubsetConfig) -> Self {
         match c {
             ProcSubsetConfig::Pid => Self::Pid,
@@ -182,7 +182,7 @@ enum HidePidConfig {
     Invisible,
 }
 
-impl From<HidePidConfig> for pnut::mount::HidePid {
+impl From<HidePidConfig> for pnut::HidePid {
     fn from(c: HidePidConfig) -> Self {
         match c {
             HidePidConfig::Visible => Self::Visible,
@@ -236,85 +236,47 @@ enum MountEntryConfig {
     },
 }
 
-impl From<MountEntryConfig> for pnut::mount::Entry {
+impl From<MountEntryConfig> for pnut::MountEntry {
     fn from(config: MountEntryConfig) -> Self {
         match config {
             MountEntryConfig::Bind {
                 src,
                 dst,
                 read_only,
-            } => Self {
-                src: Some(src),
-                dst: Some(dst),
-                bind: true,
+            } => Self::Bind {
+                src,
+                dst,
                 read_only,
-                mount_type: None,
-                content: None,
-                size: None,
-                perms: None,
-                proc_subset: None,
-                hidepid: None,
             },
             MountEntryConfig::Tmpfs {
                 dst,
                 read_only,
                 size,
                 perms,
-            } => Self {
-                src: None,
-                dst: Some(dst),
-                bind: false,
-                read_only,
-                mount_type: Some("tmpfs".to_string()),
-                content: None,
+            } => Self::Tmpfs {
+                dst,
                 size,
-                perms,
-                proc_subset: None,
-                hidepid: None,
+                mode: perms.map(|p| parse_perms(&p)),
+                read_only,
             },
             MountEntryConfig::Proc {
                 dst,
                 proc_subset,
                 hidepid,
-            } => Self {
-                src: None,
-                dst: Some(dst),
-                bind: false,
-                read_only: false,
-                mount_type: Some("proc".to_string()),
-                content: None,
-                size: None,
-                perms: None,
-                proc_subset: proc_subset.map(Into::into),
+            } => Self::Proc {
+                dst,
+                subset: proc_subset.map(Into::into),
                 hidepid: hidepid.map(Into::into),
             },
-            MountEntryConfig::Mqueue { dst } => Self {
-                src: None,
-                dst: Some(dst),
-                bind: false,
-                read_only: false,
-                mount_type: Some("mqueue".to_string()),
-                content: None,
-                size: None,
-                perms: None,
-                proc_subset: None,
-                hidepid: None,
-            },
+            MountEntryConfig::Mqueue { dst } => Self::Mqueue { dst },
             MountEntryConfig::File {
                 dst,
                 content,
                 read_only,
-            } => Self {
-                src: None,
-                dst: Some(dst),
-                bind: false,
+            } => Self::File {
+                dst,
+                content,
                 read_only,
-                mount_type: None,
-                content: Some(content),
-                size: None,
-                perms: None,
-                proc_subset: None,
-                hidepid: None,
             },
         }
     }
@@ -330,7 +292,7 @@ struct IdMapConfig {
     count: u32,
 }
 
-impl From<IdMapConfig> for pnut::idmap::Map {
+impl From<IdMapConfig> for pnut::IdMap {
     fn from(config: IdMapConfig) -> Self {
         Self::new(config.inside, config.outside, config.count)
     }
@@ -338,7 +300,7 @@ impl From<IdMapConfig> for pnut::idmap::Map {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EnvConfig {
+struct Environment {
     #[serde(default)]
     clear: bool,
     #[serde(default)]
@@ -347,8 +309,8 @@ struct EnvConfig {
     keep: Vec<String>,
 }
 
-impl From<EnvConfig> for pnut::env::Config {
-    fn from(config: EnvConfig) -> Self {
+impl From<Environment> for pnut::Environment {
+    fn from(config: Environment) -> Self {
         Self {
             clear: config.clear,
             set: config.set,
@@ -376,7 +338,7 @@ struct RlimitsConfig {
     cpu: Option<u64>,
 }
 
-impl From<RlimitsConfig> for pnut::rlimit::Config {
+impl From<RlimitsConfig> for pnut::ResourceLimits {
     fn from(config: RlimitsConfig) -> Self {
         Self {
             nofile: config.nofile,
@@ -385,14 +347,14 @@ impl From<RlimitsConfig> for pnut::rlimit::Config {
             stack_mb: config.stack_mb,
             as_mb: config.as_mb,
             core_mb: config.core_mb,
-            cpu: config.cpu,
+            cpu_seconds: config.cpu,
         }
     }
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LandlockConfig {
+struct Landlock {
     #[serde(default)]
     allowed_read: Vec<String>,
     #[serde(default)]
@@ -416,8 +378,8 @@ struct LandlockConfig {
     allowed_ioctl_dev: Vec<String>,
 }
 
-impl From<LandlockConfig> for pnut::landlock::Config {
-    fn from(config: LandlockConfig) -> Self {
+impl From<Landlock> for pnut::Landlock {
+    fn from(config: Landlock) -> Self {
         Self {
             allowed_read: config.allowed_read,
             allowed_write: config.allowed_write,
@@ -439,17 +401,17 @@ struct CapabilitiesConfig {
 }
 
 impl CapabilitiesConfig {
-    fn into_config(self) -> Result<pnut::caps::Config> {
+    fn into_config(self) -> Result<pnut::Capabilities> {
         let mut keep = Vec::with_capacity(self.keep.len());
         for name in &self.keep {
-            let cap = name.parse::<pnut::caps::Capability>().map_err(|_| {
+            let cap = name.parse::<pnut::Capability>().map_err(|_| {
                 BuildError::InvalidConfig(format!(
                     "invalid capability name '{name}'; expected CAP_NET_BIND_SERVICE, CAP_SYS_ADMIN, etc."
                 ))
             })?;
             keep.push(cap);
         }
-        Ok(pnut::caps::Config { keep })
+        Ok(pnut::Capabilities { keep })
     }
 }
 
@@ -469,14 +431,14 @@ struct FdMappingConfig {
     dst: i32,
 }
 
-impl From<FdPolicyConfig> for pnut::fd::Config {
+impl From<FdPolicyConfig> for pnut::FileDescriptors {
     fn from(config: FdPolicyConfig) -> Self {
         Self {
             close_fds: config.close_fds,
             mappings: config
                 .map
                 .into_iter()
-                .map(|m| pnut::fd::FdMapping {
+                .map(|m| pnut::FdMapping {
                     src: m.src,
                     dst: m.dst,
                 })
@@ -511,12 +473,24 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {
-            // Config validation errors exit 126 ("command cannot execute"),
-            // matching the child-side behavior for sandbox setup failures.
-            let is_build_error = e.is::<BuildError>()
-                || e.downcast_ref::<pnut::Error>()
-                    .is_some_and(|e| matches!(e, pnut::Error::Build(_)));
-            if is_build_error {
+            // Extract exit code from child setup failures, or use standard
+            // exit codes for parent-side errors.
+            if let Some(pnut_err) = e.downcast_ref::<pnut::Error>() {
+                match pnut_err {
+                    pnut::Error::ChildSetup { exit_code, .. } => {
+                        eprintln!("pnut: {e:#}");
+                        ExitCode::from(*exit_code as u8)
+                    }
+                    pnut::Error::Build(_) => {
+                        eprintln!("pnut: {e:#}");
+                        ExitCode::from(126)
+                    }
+                    _ => {
+                        eprintln!("pnut: {e:#}");
+                        ExitCode::from(1)
+                    }
+                }
+            } else if e.is::<BuildError>() {
                 eprintln!("pnut: {e:#}");
                 ExitCode::from(126)
             } else {
@@ -536,7 +510,16 @@ fn run() -> Result<i32> {
         builder.command_with_args(cli.command);
     }
 
-    Ok(builder.run()?)
+    let sandbox = pnut::Sandbox::try_from(builder)?;
+    Ok(sandbox.run()?)
+}
+
+fn parse_perms(perms: &str) -> u32 {
+    let s = perms.strip_prefix('0').unwrap_or(perms);
+    if s.is_empty() {
+        return 0;
+    }
+    u32::from_str_radix(s, 8).unwrap_or(0)
 }
 
 fn load_sandbox(path: &Path) -> Result<SandboxBuilder> {
@@ -590,28 +573,28 @@ fn sandbox_from_config(config: SandboxConfig) -> Result<SandboxBuilder> {
     builder.process().mdwe = settings.mdwe;
 
     // Namespace config + hostname from settings.
-    let ns_config = pnut::namespace::Config {
-        user: namespaces.user,
-        pid: namespaces.pid,
-        mount: namespaces.mount,
-        uts: namespaces.uts,
-        ipc: namespaces.ipc,
-        net: namespaces.net,
-        cgroup: namespaces.cgroup,
-        time: namespaces.time,
-        hostname: settings.hostname,
-        allow_nested_userns: namespaces.allow_nested_userns,
-    };
-    *builder.namespaces() = ns_config;
+    let ns = builder.namespaces();
+    ns.user(namespaces.user)
+        .pid(namespaces.pid)
+        .mount(namespaces.mount)
+        .uts(namespaces.uts)
+        .ipc(namespaces.ipc)
+        .net(namespaces.net)
+        .cgroup(namespaces.cgroup)
+        .time(namespaces.time);
+    ns.allow_nested_userns = namespaces.allow_nested_userns;
+    if let Some(hostname) = settings.hostname {
+        ns.hostname(hostname);
+    }
 
     builder.mounts().extend(mount.into_iter().map(Into::into));
 
     if let Some(map) = uid_map {
-        let map: pnut::idmap::Map = map.into();
+        let map: pnut::IdMap = map.into();
         builder.uid_map(map.inside, map.outside, map.count);
     }
     if let Some(map) = gid_map {
-        let map: pnut::idmap::Map = map.into();
+        let map: pnut::IdMap = map.into();
         builder.gid_map(map.inside, map.outside, map.count);
     }
     if let Some(config) = env {

@@ -83,7 +83,7 @@ dst = "/proc"
     )
 }
 
-// --- Invariant: deny_unknown_fields preserved on LandlockConfig ---
+// --- Invariant: deny_unknown_fields preserved on Landlock ---
 
 /// Unknown fields in [landlock] section are rejected (V4 fields don't break serde).
 #[test]

@@ -20,7 +20,7 @@ fn public_sandbox_builder_runs_command() {
     let mut builder = base_builder();
     builder.command("/bin/true");
 
-    assert_eq!(builder.run().unwrap(), 0);
+    assert_eq!(builder.build().unwrap().run().unwrap(), 0);
 }
 
 #[test]
@@ -29,5 +29,5 @@ fn public_sandbox_builder_propagates_exit_code() {
     builder.mode(RunMode::Once);
     builder.command("/bin/sh").args(["-c", "exit 7"]);
 
-    assert_eq!(builder.run().unwrap(), 7);
+    assert_eq!(builder.build().unwrap().run().unwrap(), 7);
 }
