@@ -36,6 +36,8 @@ impl Config {
 }
 
 /// Set up the process environment according to the config.
+///
+/// Called in the child process after fork.
 pub(crate) fn setup_environment(env_config: &Config) {
     unsafe {
         if env_config.clear {

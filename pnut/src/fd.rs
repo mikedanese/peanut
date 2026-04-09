@@ -42,6 +42,8 @@ impl Config {
 }
 
 /// Apply fd mappings (cycle-safe) and optionally close all other fds >= 3.
+///
+/// Called in the child process after fork.
 pub(crate) fn apply_fd_config(config: &Config) -> Result<(), Error> {
     apply_mappings(&config.mappings)?;
 

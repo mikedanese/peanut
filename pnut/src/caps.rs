@@ -19,6 +19,8 @@ impl Config {
 }
 
 /// Apply capability restrictions: drop everything not in the keep list.
+///
+/// Called in the child process after fork.
 pub(crate) fn apply_capabilities(config: &Config) -> Result<(), Error> {
     let keep_caps: caps::CapsHashSet = config.keep.iter().copied().collect();
 

@@ -141,6 +141,8 @@ fn add_path_rule(
 }
 
 /// Apply Landlock filesystem and network restrictions based on the config.
+///
+/// Called in the child process after fork.
 pub(crate) fn apply_landlock(config: &Config) -> Result<(), Error> {
     let abi = required_abi(config);
 

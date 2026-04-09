@@ -258,6 +258,8 @@ fn mnt_nix(context: impl Into<String>, e: nix::errno::Errno) -> Error {
 }
 
 /// Set up the isolated filesystem and pivot_root into it.
+///
+/// Called in the child process after fork.
 pub(crate) fn setup_filesystem(sandbox: &Sandbox) -> Result<(), Error> {
     mount(
         None::<&str>,

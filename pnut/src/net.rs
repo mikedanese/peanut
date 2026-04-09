@@ -13,6 +13,8 @@ use std::os::unix::io::AsRawFd;
 
 /// Bring up the loopback (lo) interface in the current network namespace.
 ///
+/// Called in the child process after fork.
+///
 /// Creates a temporary UDP socket, constructs an `ifreq` struct for "lo",
 /// and uses `ioctl(SIOCSIFFLAGS)` to set `IFF_UP | IFF_RUNNING`.
 /// The socket is closed when the function returns (RAII via OwnedFd).

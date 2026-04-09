@@ -62,6 +62,8 @@ impl Config {
 }
 
 /// Apply all configured resource limits.
+///
+/// Called in the child process after fork.
 pub(crate) fn apply_rlimits(config: &Config) -> Result<(), Error> {
     if let Some(nofile) = config.nofile {
         set_limit(Resource::RLIMIT_NOFILE, nofile, "RLIMIT_NOFILE")?;
