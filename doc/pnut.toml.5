@@ -161,3 +161,443 @@ array-of-tables element.\& Mounts are applied in order before \fBpivot_root\fR.\
 Each entry must have a \fBtype\fR field that selects the mount variant.\& Available
 types and their fields:
 .P
+\fBtype = "bind"\fR
+.P
+Recursive bind mount (MS_BIND | MS_REC) from host into sandbox.\&
+.P
+\fBsrc\fR (string)
+.RS 4
+Source path on the host.\& \fBRequired\fR.\&
+.P
+.RE
+\fBdst\fR (string)
+.RS 4
+Destination path inside the sandbox.\& \fBRequired\fR.\&
+.P
+.RE
+\fBread_only\fR (bool)
+.RS 4
+Remount read-only (MS_RDONLY).\& Default: \fBtrue\fR.\&
+.P
+.RE
+\fBtype = "tmpfs"\fR
+.P
+Mount a fresh tmpfs at the destination.\&
+.P
+\fBdst\fR (string)
+.RS 4
+Destination path inside the sandbox.\& \fBRequired\fR.\&
+.P
+.RE
+\fBsize\fR (integer)
+.RS 4
+Size limit in bytes.\& Optional.\&
+.P
+.RE
+\fBperms\fR (string)
+.RS 4
+Octal permission string (e.\&g.\&, "1777").\& Optional.\&
+.P
+.RE
+\fBtype = "proc"\fR
+.P
+Mount procfs with hardened defaults.\&
+.P
+\fBdst\fR (string)
+.RS 4
+Destination path inside the sandbox.\& \fBRequired\fR.\&
+.P
+.RE
+\fBproc_subset\fR (string)
+.RS 4
+The \fBsubset=\fR mount option.\& Valid values: \fB"pid"\fR.\&
+When set to \fB"pid"\fR (default), only PID-related entries are visible;
+\fB/proc/sys\fR, \fB/proc/kallsyms\fR, \fB/proc/net\fR, etc.\& are hidden.\&
+Set to \fBnull\fR to mount full proc.\& Requires kernel >= 5.\&8.\&
+.P
+.RE
+\fBhidepid\fR (string)
+.RS 4
+The \fBhidepid=\fR mount option.\& Valid values: \fB"invisible"\fR (default),
+\fB"hidden"\fR, \fB"visible"\fR, or numeric \fB"0"\fR, \fB"1"\fR, \fB"2"\fR.\& Controls
+visibility of other processes'\& \fB/proc/<pid>\fR directories.\&
+.P
+.RE
+\fBtype = "mqueue"\fR
+.P
+Mount a POSIX message queue filesystem.\&
+.P
+\fBdst\fR (string)
+.RS 4
+Destination path inside the sandbox.\& \fBRequired\fR.\&
+.P
+.RE
+\fBtype = "file"\fR
+.P
+Inject inline file content into the sandbox filesystem.\&
+.P
+\fBdst\fR (string)
+.RS 4
+Destination path inside the sandbox.\& \fBRequired\fR.\&
+.P
+.RE
+\fBcontent\fR (string)
+.RS 4
+File content to write.\& \fBRequired\fR.\&
+.P
+.RE
+\fBread_only\fR (bool)
+.RS 4
+Make the injected file read-only.\& Default: \fBtrue\fR.\&
+.P
+.RE
+.SS [uid_map]
+.P
+Maps a host UID range into the sandbox.\& Typically required when
+\fBnamespaces.\&user = true\fR to give the sandboxed process a valid UID.\&
+.P
+\fBinside\fR (integer)
+.RS 4
+UID inside the sandbox.\& Default: \fB0\fR.\&
+.P
+.RE
+\fBoutside\fR (integer)
+.RS 4
+Host UID to map from.\& \fBRequired\fR.\&
+.P
+.RE
+\fBcount\fR (integer)
+.RS 4
+Number of consecutive UIDs to map.\& Default: \fB1\fR.\&
+.P
+.RE
+.SS [gid_map]
+.P
+Maps a host GID range into the sandbox.\& Same schema as \fB[uid_map]\fR.\&
+.P
+\fBinside\fR (integer)
+.RS 4
+GID inside the sandbox.\& Default: \fB0\fR.\&
+.P
+.RE
+\fBoutside\fR (integer)
+.RS 4
+Host GID to map from.\& \fBRequired\fR.\&
+.P
+.RE
+\fBcount\fR (integer)
+.RS 4
+Number of consecutive GIDs to map.\& Default: \fB1\fR.\&
+.P
+.RE
+.SS [env]
+.P
+Environment variable policy for the sandboxed process.\&
+.P
+\fBclear\fR (bool)
+.RS 4
+Clear all inherited environment variables before applying \fBset\fR and
+\fBkeep\fR.\& Default: \fBfalse\fR.\&
+.P
+.RE
+\fBset\fR (table)
+.RS 4
+Key-value pairs to set or override.\& Applied after \fBclear\fR and \fBkeep\fR.\&
+.P
+.nf
+.RS 4
+[env]
+clear = true
+
+[env\&.set]
+PATH = "/usr/bin:/bin"
+HOME = "/home/sandbox"
+.fi
+.RE
+.P
+.RE
+\fBkeep\fR (array of strings)
+.RS 4
+Host environment variables to preserve when \fBclear = true\fR.\& Ignored when
+\fBclear = false\fR (all variables are already inherited).\&
+.P
+.nf
+.RS 4
+[env]
+clear = true
+keep = ["TERM", "LANG"]
+.fi
+.RE
+.P
+.RE
+.SS [rlimits]
+.P
+Resource limits applied via \fBsetrlimit\fR(2).\& All fields are optional; omitted
+fields leave the inherited limit unchanged.\& For fields ending in \fB_mb\fR, the
+value is in mebibytes and is converted to bytes internally.\&
+.P
+\fBnofile\fR (integer)
+.RS 4
+RLIMIT_NOFILE.\& Maximum number of open file descriptors.\&
+.P
+.RE
+\fBnproc\fR (integer)
+.RS 4
+RLIMIT_NPROC.\& Maximum number of processes for the real user ID.\&
+.P
+.RE
+\fBfsize_mb\fR (integer)
+.RS 4
+RLIMIT_FSIZE.\& Maximum file size in MiB.\&
+.P
+.RE
+\fBstack_mb\fR (integer)
+.RS 4
+RLIMIT_STACK.\& Maximum stack size in MiB.\&
+.P
+.RE
+\fBas_mb\fR (integer)
+.RS 4
+RLIMIT_AS.\& Maximum virtual memory (address space) in MiB.\&
+.P
+.RE
+\fBcore_mb\fR (integer)
+.RS 4
+RLIMIT_CORE.\& Maximum core dump size in MiB.\&
+.P
+.RE
+\fBcpu\fR (integer)
+.RS 4
+RLIMIT_CPU.\& Maximum CPU time in seconds.\&
+.P
+.RE
+.SS [landlock]
+.P
+Landlock LSM filesystem access control.\& Restricts filesystem access beyond
+what mount namespace isolation provides.\& All fields are arrays of path strings.\&
+.P
+When a [landlock] section is present, all filesystem access rights up to the
+highest ABI required by the configured fields are governed.\& Configuring a
+field that requires a newer ABI than the running kernel supports produces an
+error (exit 126).\&
+.P
+\fBallowed_read\fR (array of strings)
+.RS 4
+Paths where read access is permitted.\& ABI V1 (kernel 5.\&13+).\&
+.P
+.RE
+\fBallowed_write\fR (array of strings)
+.RS 4
+Paths where write access is permitted.\& ABI V1 (kernel 5.\&13+).\&
+.P
+.RE
+\fBallowed_execute\fR (array of strings)
+.RS 4
+Paths where execute access is permitted.\& ABI V1 (kernel 5.\&13+).\&
+.P
+.RE
+\fBallowed_refer\fR (array of strings)
+.RS 4
+Paths where cross-directory rename and link operations are permitted.\&
+Requires ABI V2 (kernel 5.\&19+).\&
+.P
+.RE
+\fBallowed_truncate\fR (array of strings)
+.RS 4
+Paths where file truncation (\fBtruncate\fR(2), \fBftruncate\fR(2), \fBcreat\fR(2),
+\fBopen\fR(2) with O_TRUNC) is permitted.\& Requires ABI V3 (kernel 6.\&2+).\&
+.P
+.RE
+\fBallowed_bind\fR (array of integers)
+.RS 4
+TCP ports the sandboxed process is allowed to \fBbind\fR(2).\& When non-empty,
+all TCP bind attempts to ports not in this list are denied.\& Requires
+ABI V4 (kernel 6.\&7+).\&
+.P
+.RE
+\fBallowed_connect\fR (array of integers)
+.RS 4
+TCP ports the sandboxed process is allowed to \fBconnect\fR(2) to.\& When
+non-empty, all TCP connect attempts to ports not in this list are denied.\&
+Requires ABI V4 (kernel 6.\&7+).\&
+.P
+.RE
+\fBallowed_ioctl_dev\fR (array of strings)
+.RS 4
+Paths where device ioctl commands are permitted.\&
+Requires ABI V5 (kernel 6.\&10+).\&
+.P
+.RE
+.SS [capabilities]
+.P
+Linux capability management.\& All capabilities are dropped by default.\&
+.P
+\fBkeep\fR (array of strings)
+.RS 4
+Capabilities to retain (e.\&g.\&, CAP_NET_BIND_SERVICE, CAP_SYS_PTRACE).\&
+Names are validated at build time.\&
+.P
+.RE
+.SS [fd]
+.P
+File descriptor policy.\&
+.P
+\fBclose_fds\fR (bool)
+.RS 4
+Close all file descriptors >= 3 that are not explicitly mapped.\&
+Default: \fBtrue\fR.\&
+.P
+.RE
+\fBmap\fR (array of tables)
+.RS 4
+Explicit FD remappings.\& Each entry has:
+.P
+\fBsrc\fR (integer)
+.RS 4
+Source file descriptor.\& \fBRequired\fR.\&
+.P
+.RE
+\fBdst\fR (integer)
+.RS 4
+Destination file descriptor.\& \fBRequired\fR.\& Must be unique across all
+mappings.\&
+.P
+.RE
+.RE
+.SS [run]
+.P
+Default command to execute if none is given on the command line.\& CLI arguments
+(after \fB--\fR) take priority over this section.\&
+.P
+\fBpath\fR (string)
+.RS 4
+Binary path to execute.\& \fBRequired\fR.\&
+.P
+.RE
+\fBargs\fR (array of strings)
+.RS 4
+Arguments to pass to the command.\& Default: empty.\&
+.P
+.RE
+\fBargv0\fR (string)
+.RS 4
+Override argv[0] for the command.\& Overrides \fBsandbox.\&argv0\fR when the
+\fB[run]\fR section command is used.\& Default: use \fBpath\fR as argv[0].\&
+.P
+.RE
+.SS seccomp_policy, seccomp_policy_file (top-level)
+.P
+Seccomp-bpf syscall filtering using a Kafel-inspired DSL.\& These two fields are
+mutually exclusive; specifying both is an error.\&
+.P
+\fBseccomp_policy\fR (string)
+.RS 4
+Inline seccomp policy string.\&
+.P
+.nf
+.RS 4
+seccomp_policy = """
+POLICY default {
+  ALLOW { read, write, exit, exit_group, brk, mmap, close }
+  DENY {}
+}
+USE default DEFAULT KILL
+"""
+.fi
+.RE
+.P
+.RE
+\fBseccomp_policy_file\fR (string)
+.RS 4
+Path to a file containing the seccomp policy.\&
+.P
+.RE
+.SH EXAMPLES
+.P
+A comprehensive configuration:
+.P
+.nf
+.RS 4
+[sandbox]
+hostname = "box"
+cwd = "/home/user"
+mode = "once"
+new_session = true
+die_with_parent = true
+
+[namespaces]
+user = true
+pid = true
+mount = true
+uts = true
+ipc = true
+net = true
+
+[uid_map]
+inside = 0
+outside = 1000
+count = 1
+
+[gid_map]
+inside = 0
+outside = 1000
+count = 1
+
+[[mount]]
+type = "bind"
+src = "/usr"
+dst = "/usr"
+
+[[mount]]
+type = "tmpfs"
+dst = "/tmp"
+size = 67108864
+perms = "1777"
+
+[[mount]]
+type = "proc"
+dst = "/proc"
+
+[[mount]]
+type = "file"
+dst = "/etc/hostname"
+content = "sandbox"
+
+[env]
+clear = true
+keep = ["TERM", "LANG"]
+
+[env\&.set]
+PATH = "/usr/bin:/bin"
+HOME = "/home/user"
+
+[rlimits]
+nofile = 256
+nproc = 64
+as_mb = 512
+
+[landlock]
+allowed_read = ["/usr", "/lib", "/lib64", "/etc"]
+allowed_write = ["/tmp"]
+allowed_execute = ["/usr/bin", "/bin"]
+allowed_refer = ["/tmp"]
+allowed_truncate = ["/tmp"]
+allowed_bind = [80, 443]
+allowed_connect = [443]
+
+[capabilities]
+keep = []
+
+[fd]
+close_fds = true
+
+[run]
+path = "/bin/sh"
+args = ["-i"]
+.fi
+.RE
+.P
+.SH SEE ALSO
+.P
+\fBpnut\fR(1), \fBtoml\fR(5), \fBsetrlimit\fR(2), \fBseccomp\fR(2), \fBlandlock\fR(7),
+\fBcapabilities\fR(7)

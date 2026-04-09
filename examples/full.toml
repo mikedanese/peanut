@@ -116,6 +116,11 @@ cpu = 60                       # Max CPU time (seconds)
 allowed_read = ["/usr", "/lib", "/lib64", "/bin", "/etc", "/proc"]
 allowed_write = ["/tmp"]
 allowed_execute = ["/usr/bin", "/bin"]
+# allowed_refer = ["/tmp"]          # Cross-directory rename/link (ABI V2, kernel 5.19+)
+# allowed_truncate = ["/tmp"]       # File truncation (ABI V3, kernel 6.2+)
+# allowed_bind = [80, 443]          # TCP bind port allowlist (ABI V4, kernel 6.7+)
+# allowed_connect = [443, 8080]     # TCP connect port allowlist (ABI V4, kernel 6.7+)
+# allowed_ioctl_dev = ["/dev/null"] # Device ioctl (ABI V5, kernel 6.10+)
 
 # --- Capabilities ---
 

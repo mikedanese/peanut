@@ -389,6 +389,21 @@ struct LandlockConfig {
     allowed_write: Vec<String>,
     #[serde(default)]
     allowed_execute: Vec<String>,
+    /// Paths allowed for cross-directory rename/link (Landlock ABI V2+).
+    #[serde(default)]
+    allowed_refer: Vec<String>,
+    /// Paths where file truncation is allowed (Landlock ABI V3+).
+    #[serde(default)]
+    allowed_truncate: Vec<String>,
+    /// TCP ports the sandboxed process may bind (Landlock ABI V4+).
+    #[serde(default)]
+    allowed_bind: Vec<u16>,
+    /// TCP ports the sandboxed process may connect to (Landlock ABI V4+).
+    #[serde(default)]
+    allowed_connect: Vec<u16>,
+    /// Paths where device ioctl commands are allowed (Landlock ABI V5+).
+    #[serde(default)]
+    allowed_ioctl_dev: Vec<String>,
 }
 
 impl From<LandlockConfig> for pnut::landlock::Config {
@@ -397,6 +412,11 @@ impl From<LandlockConfig> for pnut::landlock::Config {
             allowed_read: config.allowed_read,
             allowed_write: config.allowed_write,
             allowed_execute: config.allowed_execute,
+            allowed_refer: config.allowed_refer,
+            allowed_truncate: config.allowed_truncate,
+            allowed_bind: config.allowed_bind,
+            allowed_connect: config.allowed_connect,
+            allowed_ioctl_dev: config.allowed_ioctl_dev,
         }
     }
 }

@@ -112,7 +112,7 @@ array-of-tables element. Mounts are applied in order before *pivot_root*.
 Each entry must have a *type* field that selects the mount variant. Available
 types and their fields:
 
-### type = "bind"
+*type = "bind"*
 
 Recursive bind mount (MS_BIND | MS_REC) from host into sandbox.
 
@@ -125,7 +125,7 @@ Recursive bind mount (MS_BIND | MS_REC) from host into sandbox.
 *read_only* (bool)
 	Remount read-only (MS_RDONLY). Default: *true*.
 
-### type = "tmpfs"
+*type = "tmpfs"*
 
 Mount a fresh tmpfs at the destination.
 
@@ -138,7 +138,7 @@ Mount a fresh tmpfs at the destination.
 *perms* (string)
 	Octal permission string (e.g., "1777"). Optional.
 
-### type = "proc"
+*type = "proc"*
 
 Mount procfs with hardened defaults.
 
@@ -156,14 +156,14 @@ Mount procfs with hardened defaults.
 	*"hidden"*, *"visible"*, or numeric *"0"*, *"1"*, *"2"*. Controls
 	visibility of other processes' */proc/<pid>* directories.
 
-### type = "mqueue"
+*type = "mqueue"*
 
 Mount a POSIX message queue filesystem.
 
 *dst* (string)
 	Destination path inside the sandbox. *Required*.
 
-### type = "file"
+*type = "file"*
 
 Inject inline file content into the sandbox filesystem.
 
@@ -265,14 +265,41 @@ value is in mebibytes and is converted to bytes internally.
 Landlock LSM filesystem access control. Restricts filesystem access beyond
 what mount namespace isolation provides. All fields are arrays of path strings.
 
+When a \[landlock\] section is present, all filesystem access rights up to the
+highest ABI required by the configured fields are governed. Configuring a
+field that requires a newer ABI than the running kernel supports produces an
+error (exit 126).
+
 *allowed_read* (array of strings)
-	Paths where read access is permitted.
+	Paths where read access is permitted. ABI V1 (kernel 5.13+).
 
 *allowed_write* (array of strings)
-	Paths where write access is permitted.
+	Paths where write access is permitted. ABI V1 (kernel 5.13+).
 
 *allowed_execute* (array of strings)
-	Paths where execute access is permitted.
+	Paths where execute access is permitted. ABI V1 (kernel 5.13+).
+
+*allowed_refer* (array of strings)
+	Paths where cross-directory rename and link operations are permitted.
+	Requires ABI V2 (kernel 5.19+).
+
+*allowed_truncate* (array of strings)
+	Paths where file truncation (*truncate*(2), *ftruncate*(2), *creat*(2),
+	*open*(2) with O_TRUNC) is permitted. Requires ABI V3 (kernel 6.2+).
+
+*allowed_bind* (array of integers)
+	TCP ports the sandboxed process is allowed to *bind*(2). When non-empty,
+	all TCP bind attempts to ports not in this list are denied. Requires
+	ABI V4 (kernel 6.7+).
+
+*allowed_connect* (array of integers)
+	TCP ports the sandboxed process is allowed to *connect*(2) to. When
+	non-empty, all TCP connect attempts to ports not in this list are denied.
+	Requires ABI V4 (kernel 6.7+).
+
+*allowed_ioctl_dev* (array of strings)
+	Paths where device ioctl commands are permitted.
+	Requires ABI V5 (kernel 6.10+).
 
 ## [capabilities]
 
@@ -403,6 +430,10 @@ as_mb = 512
 allowed_read = ["/usr", "/lib", "/lib64", "/etc"]
 allowed_write = ["/tmp"]
 allowed_execute = ["/usr/bin", "/bin"]
+allowed_refer = ["/tmp"]
+allowed_truncate = ["/tmp"]
+allowed_bind = [80, 443]
+allowed_connect = [443]
 
 [capabilities]
 keep = []
