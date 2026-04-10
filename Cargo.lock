@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "pnut"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bumpalo",
  "caps",
@@ -448,14 +448,14 @@ dependencies = [
 
 [[package]]
 name = "pnut-child"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "pnut-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
