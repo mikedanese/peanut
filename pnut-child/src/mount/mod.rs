@@ -45,6 +45,10 @@ pub(crate) fn setup(plan: &MountPlan<'_>) -> core::result::Result<(), MountError
     let staging_fd = syscall::openat_dir(root_fd.as_raw(), CONTENT_STAGING)
         .map_err(|err| MountError::new(err, 0))?;
 
+    // Lay down the managed /dev tmpfs first so user bind-mounts under /dev
+    // (e.g. /dev/nvidia0) land on top and aren't shadowed.
+    dev::setup_dev(root_fd.as_raw()).map_err(|err| MountError::new(err, 2000))?;
+
     let mut content_count = 0usize;
     for (idx, entry) in plan.entries.iter().enumerate() {
         process_mount_entry(
@@ -55,8 +59,6 @@ pub(crate) fn setup(plan: &MountPlan<'_>) -> core::result::Result<(), MountError
         )
         .map_err(|err| MountError::new(err, 1000 + idx as i32))?;
     }
-
-    dev::setup_dev(root_fd.as_raw()).map_err(|err| MountError::new(err, 2000))?;
     pivot_and_cleanup(root_fd.as_raw(), staging_fd.as_raw(), content_count)
         .map_err(|err| MountError::new(err, 3000))?;
     Ok(())

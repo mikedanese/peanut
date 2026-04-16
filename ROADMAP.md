@@ -4,6 +4,10 @@ What's next for pnut, roughly in priority order.
 
 ## Done (recent)
 
+- **User `/dev/*` bind-mounts survive `setup_dev`** — `setup_dev` now runs
+  before the user mount loop so bind-mounts under `/dev` (e.g. `/dev/nvidia0`
+  for CUDA) land on top of the managed `/dev` tmpfs instead of being silently
+  shadowed by it.
 - **Seccomp diagnostic rendering** — kafel errors now carry byte-offset spans
   threaded from pest through the AST and resolver. `kafel::render_diagnostic`
   produces rustc-style output with `--> file:line:col`, a source snippet, and
@@ -31,6 +35,17 @@ What's next for pnut, roughly in priority order.
 
 ## Now
 
+### Bugs (from first-use feedback)
+
+- **`allowed_connect = []` means "unrestricted", not "deny all".** Silent
+  network-egress footgun: the natural reading of an empty allowlist is
+  deny-all, but today it disables the filter entirely. Fix: flip semantics
+  so empty = deny all, with an explicit `unrestricted_connect = true` (or
+  `Option<Vec<u16>>` where absent = unrestricted, `Some([])` = deny). Audit
+  `allowed_bind` for the same issue.
+
+### Other
+
 - **Man page installation** — `pnut(1)` and `pnut.toml(5)` are written (scdoc
   source in `doc/`); need an install story (`make install` or similar).
 - **Landlock port ranges** — `allowed_bind` and `allowed_connect` currently
@@ -53,6 +68,19 @@ What's next for pnut, roughly in priority order.
 
 - **High-level path access declarations** — a single directive like
   `allow_read = ["/data"]` that auto-configures bind mount + Landlock allowlist.
+- **Landlock errors should name the failing path.** Today a bad path in
+  `allowed_read`/`write`/`execute` surfaces as `No such file or directory
+  (os error 2)` with no indication which path triggered it. Debugging means
+  commenting paths out one at a time. Include the path string in the error,
+  or log each rule as it's added.
+- **`pnut --help` should point at the schema.** Add a "see `examples/full.toml`
+  or `man 5 pnut.toml`" line so first-time users aren't guessing at section
+  names.
+- **`--verbose` / tracing mode.** Trace the mount plan, Landlock rules
+  applied, and child exit cause. When a sandboxed command dies at startup,
+  pnut exits with the same code and no extra context — combined with silent
+  fallbacks in downstream tools (e.g. CUDA → CPU), debugging takes longer
+  than it should.
 - **Testing on more kernels** — CI coverage across kernel versions (5.11,
   5.15 LTS, 6.x).
 
